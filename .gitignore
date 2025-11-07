@@ -1,0 +1,20 @@
+.venv/
+.vscode
+.ruff_cache
+.mypy_cache
+.python-version
+
+__pycache__/
+
+# ==実験データ==
+src/analysis/exp01_pitch_mora_count_analysis/data/pitch_count/*
+!src/analysis/exp01_pitch_mora_count_analysis/data/pitch_count/.gitkeep
+
+src/analysis/exp01_pitch_mora_count_analysis/data/01exp_figures/Consonant/*
+!src/analysis/exp01_pitch_mora_count_analysis/data/01exp_figures/Consonant/.gitkeep
+
+src/analysis/exp01_pitch_mora_count_analysis/data/01exp_figures/Special Symbol/*
+!src/analysis/exp01_pitch_mora_count_analysis/data/01exp_figures/Special Symbol/.gitkeep
+
+src/analysis/exp01_pitch_mora_count_analysis/data/01exp_figures/Vowel/*
+!src/analysis/exp01_pitch_mora_count_analysis/data/01exp_figures/Vowel/.gitkeep
