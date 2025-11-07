@@ -47,6 +47,10 @@ class MoraAnalyzer:
         "わを",
     ]
 
+    KATAKANA_START: ClassVar[int] = 0x30A1
+    KATAKANA_END: ClassVar[int] = 0x30F6
+    HIRAGANA_OFFSET: ClassVar[int] = 0x60
+
     _INVALID_MODE_MSG: str = "mode must be 'first' | 'all_list' | 'all_joined'"
 
     def __init__(
@@ -99,6 +103,39 @@ class MoraAnalyzer:
                 moras.append(char)
 
         return moras, len(moras)
+
+    def _special_vowel_case(self, mora: str) -> str | None:
+        """特殊モーラに対する母音を返す.
+
+        撥音, 促音, 長音記号や, ゐ, ゑ などの特殊な文字を扱う.
+        対応表に存在しない場合は None を返す.
+
+        Args:
+            mora: 1モーラ分の文字列.
+
+        Returns:
+            対応する母音1文字, または空文字列, 対応なしの場合は None.
+        """
+        return self.SPECIAL_MORA_VOWEL.get(mora)
+
+    def _to_hiragana(self, text: str) -> str:
+        """全角カタカナをひらがなに変換する.
+
+        Args:
+            text: 変換対象の文字列.
+
+        Returns:
+            カタカナをひらがなに置き換えた文字列.
+        """
+        chars: list[str] = []
+        for ch in text:
+            code = ord(ch)
+            if self.KATAKANA_START <= code <= self.KATAKANA_END:
+                chars.append(chr(code - self.HIRAGANA_OFFSET))
+            else:
+                chars.append(ch)
+        return "".join(chars)
+
 
     def _single_char_vowel(self, ch: str) -> str:
         """1文字モーラの母音を返す."""
@@ -153,7 +190,7 @@ class MoraAnalyzer:
         # 特殊モーラ判定
         special = self._special_vowel_case(mora)
         if special is not None:
-            return special
+            return str(special)
 
         length = len(mora)
         char_single = 1
@@ -181,7 +218,7 @@ class MoraAnalyzer:
         s = str(mora).strip()
         if s == "":
             return []
-        return pjt.g2p(s, kana=False).split()
+        return list(pjt.g2p(s, kana=False).split())
 
     def get_consonant(self, phonemes: list[str]) -> str:
         """音素列から先頭子音を取り出す.

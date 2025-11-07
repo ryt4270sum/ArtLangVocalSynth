@@ -124,7 +124,7 @@ class MusicXmlAnalyzer:
 
         note_min, note_max = min(pitches), max(pitches)
         # 右端を含めるよう +1
-        bins = np.arange(note_min, note_max + 2, 1)
+        bins = np.arange(note_min, note_max + 2, 1).tolist()
         pit_median = float(np.median(pitches))
         pit_mean = float(np.mean(pitches))
 
