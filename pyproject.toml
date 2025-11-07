@@ -63,3 +63,8 @@ pydocstyle.convention = "google"
 
 [tool.ruff.lint.pylint]
 max-args = 6
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+strict = true
