@@ -91,7 +91,7 @@ def aggregate_note_data(folder: str) -> pd.DataFrame:
     for file in Path(folder).iterdir():
         if file.suffix.lower() == ".xml":
             xml_path = Path(folder) / file
-            data = extract_notes_from_xml(xml_path)
+            data = extract_notes_from_xml(str(xml_path))
             all_data += data
 
     return pd.DataFrame(all_data)
@@ -198,7 +198,7 @@ df_mora_analysis.to_csv(valid_csv, index=False, encoding="utf-8-sig")
 # 相対音高のヒストグラムを調べる(音域ごとに偏りがないか確認するため)  # noqa: ERA001
 
 valid_pitches = df_mora_analysis["relative_pitch"].astype(int)
-bins = np.arange(valid_pitches.min() - 0.5, valid_pitches.max() + 1.5, 1)
+bins = np.arange(valid_pitches.min() - 0.5, valid_pitches.max() + 1.5, 1).tolist()
 
 # 3) ヒストグラム描画
 plt.figure(figsize=(16, 12))
@@ -299,25 +299,29 @@ def plot_count_histogram(
         mode: プロットモード ("default" または "consonant").
             "consonant" の場合は x軸ラベルを45°回転して描画する.
     """
-    figure_folder = folder
+    figure_folder = Path(__file__).parent if folder is None else folder
+
+    keys = list(count_dict.keys())
+    values = list(count_dict.values())
+
     if mode == "consonant":
         plt.figure(figsize=(8, 8))
-        plt.bar(count_dict.keys(), count_dict.values())
+        plt.bar(keys, values)
         plt.xticks(rotation=45, fontsize=12)
         plt.xlabel(xlabel)
         plt.ylabel("Count")
         plt.title(title)
         plt.tight_layout()
-        plt.savefig(Path(figure_folder) /  f"{title}.png")
+        plt.savefig(figure_folder /  f"{title}.png")
         plt.close()
     else:
         plt.figure(figsize=(8, 8))
-        plt.bar(count_dict.keys(), count_dict.values())
+        plt.bar(keys, values)
         plt.xlabel(xlabel)
         plt.ylabel("Count")
         plt.title(title)
         plt.tight_layout()
-        plt.savefig(Path(figure_folder) /  f"{title}.png")
+        plt.savefig(figure_folder /  f"{title}.png")
         plt.close()
 
 high_c, high_v, high_spec = count_phoneme_occurrences(High)
