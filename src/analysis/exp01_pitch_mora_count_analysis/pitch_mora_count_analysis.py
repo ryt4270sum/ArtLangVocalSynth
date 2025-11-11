@@ -20,7 +20,7 @@ from utils.musicxml_analyzer import MusicXmlAnalyzer
 plt.rcParams["font.size"] = 20
 
 
-xml_path = r"C:\Users\610ry\OneDrive - MeijiMail\院ゼミ・研究関連\修士論文\東北きりたん歌唱データベース\kiritan_singing-master\musicxml\01.xml"  # noqa: E501
+#xml_path = r"C:\Users\610ry\OneDrive - MeijiMail\院ゼミ・研究関連\修士論文\東北きりたん歌唱データベース\kiritan_singing-master\musicxml\01.xml"  # noqa: E501, ERA001
 
 musicxml_analyzer = MusicXmlAnalyzer(pic_dir=None, strip_ties=True, include_grace=False)
 mora_analyzer = MoraAnalyzer()
@@ -99,15 +99,15 @@ def aggregate_note_data(folder: str) -> pd.DataFrame:
 # ここから実行部分
 data_folder = Path(Path(__file__).parent) / "data"
 print(data_folder)
-row_csv = Path(data_folder) / "all_songs_row.csv" #生データ
+row_csv = Path(data_folder) / "exp01_all_songs_row.csv" #生データ
 normalized_csv = Path(data_folder) / "normalized_lyrics.csv" #正規化だけしたデータ
 valid_csv = Path(data_folder) / "all_mora_analysis.csv" #分析対象データ
 
 if Path(row_csv).is_file():
-    print("all_songs_row.csv exists")
+    print("exp01_all_songs_row.csv exists")
     df = pd.read_csv(row_csv)
 else:
-    print("all_songs_row.csv doesn't exist")
+    print("exp01_all_songs_row.csv doesn't exist")
     folder = r"C:\Users\610ry\OneDrive - MeijiMail\院ゼミ・研究関連\修士論文\東北きりたん歌唱データベース\kiritan_singing-master\musicxml"  # noqa: E501
     df = aggregate_note_data(folder=folder)
     #とりあえずバックアップ
@@ -201,14 +201,14 @@ valid_pitches = df_mora_analysis["relative_pitch"].astype(int)
 bins = np.arange(valid_pitches.min() - 0.5, valid_pitches.max() + 1.5, 1).tolist()
 
 # 3) ヒストグラム描画
-plt.figure(figsize=(16, 12))
-plt.hist(valid_pitches, bins=bins, edgecolor="white")
+plt.figure(figsize=(16, 8))
+plt.hist(valid_pitches, bins=bins, edgecolor="white", color="0.2")
 plt.xlabel("Normalized Pitch (MIDI Note Number - median)")
 plt.ylabel("Count")
-plt.title("Relative pitch distribution")
+plt.title("Relative Pitch Count")
 plt.xticks(range(int(valid_pitches.min()), int(valid_pitches.max() + 1)),  rotation=0, fontsize=16)
 plt.tight_layout()
-histgram_fig_path = Path(data_folder) / "01exp_figures" /  "relative_pitch_distribution.png"
+histgram_fig_path = Path(data_folder) / "01exp_figures" /  "relative_pitch_count.png"
 plt.savefig(histgram_fig_path, bbox_inches="tight")
 plt.close()
 
@@ -218,12 +218,12 @@ Mid = []
 Low = []
 
 for pitch, mora, consonant, vowel, special in df_mora_analysis.to_numpy(object):
-    if pitch > 0:
+    if pitch > 1:
         High.append([pitch, mora, consonant, vowel, special])
-    elif pitch == 0:
-        Mid.append([pitch, mora, consonant, vowel, special])
-    else:
+    elif pitch < -1:
         Low.append([pitch, mora, consonant, vowel, special])
+    else:
+        Mid.append([pitch, mora, consonant, vowel, special])
 
 print(f"High: {len(High)}, Mid: {len(Mid)}, Low: {len(Low)}")
 
@@ -231,7 +231,7 @@ VOWELS = ["a", "i", "u", "e", "o"]
 CONSONANT = [
     "k", "s", "t", "n", "h", "m", "y", "r", "w",
     "g", "z", "d", "b", "p", "ch", "j", "ts", "f", "sh",
-    "ky", "gy", "ny", "hy", "by", "py", "ry"
+    "ky", "gy", "ny", "hy", "by", "my", "py", "ry"
 ]
 SPECIALS = ["cl", "N"]
 
@@ -306,8 +306,8 @@ def plot_count_histogram(
 
     if mode == "consonant":
         plt.figure(figsize=(8, 8))
-        plt.bar(keys, values)
-        plt.xticks(rotation=45, fontsize=12)
+        plt.bar(keys, values, color="0.2")
+        plt.xticks(rotation=45, fontsize=14)
         plt.xlabel(xlabel)
         plt.ylabel("Count")
         plt.title(title)
@@ -316,7 +316,7 @@ def plot_count_histogram(
         plt.close()
     else:
         plt.figure(figsize=(8, 8))
-        plt.bar(keys, values)
+        plt.bar(keys, values, color="0.2")
         plt.xlabel(xlabel)
         plt.ylabel("Count")
         plt.title(title)
