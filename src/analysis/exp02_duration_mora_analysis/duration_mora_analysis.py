@@ -256,7 +256,7 @@ dur = df_mora_analysis["dur"]
 bpm = df_mora_analysis["BPM"]
 dur_msec =(60 * 1000 * dur / bpm).astype(int)
 
-bin_width =25 # msec
+bin_width =5 # msec
 long_threshold = 800 # 超長い音符の場合(ms)、ロングトーンとして別扱いにする
 
 # 音符ごとのBPMのヒストグラム描画
@@ -301,13 +301,10 @@ plt.close()
 
 SuperLong = []
 Long = []
-Mid = []
 Short = []
 
 s_long_count = long_count = short_count = 0
 dur_threshold =250
-# s_m_dur = 200 #実時間の閾値(ms)
-# m_l_dur =400
 
 for song, lyric, dur, bpm, con, vow, spec in df_mora_analysis.to_numpy(object):
     duration_msec = int (1000 * 60 * dur / bpm ) #ms単位にそろえるために1000をかける
@@ -315,157 +312,163 @@ for song, lyric, dur, bpm, con, vow, spec in df_mora_analysis.to_numpy(object):
         SuperLong.append([song, lyric, duration_msec, con, vow, spec])
     elif duration_msec >= dur_threshold:
         Long.append([song, lyric, duration_msec, con, vow, spec])
-    # elif duration_msec >= s_m_dur:
-    #     Mid.append([song, lyric, duration_msec, con, vow, spec])
     else:
-        Short.append([song, lyric,  duration_msec, con, vow, spec])
+        Short.append([song, lyric, duration_msec, con, vow, spec])
 
 print("SuperLong: ", len(SuperLong))
 print("Long: ", len(Long))
-print("Mid: ", len(Mid))
 print("Short: ", len(Short))
 print("Total: ", len(SuperLong)+len(Long)+len(Short))
 
-# duration_msec(3番目の要素)で降順ソート
-# top10_long = sorted(Long, key=lambda x: x[2], reverse=True)[:10]
+VOWELS = ["a", "i", "u", "e", "o"]
+CONSONANT = [
+    "k", "s", "t", "n", "h", "m", "y", "r", "w",
+    "g", "z", "d", "b", "p", "ch", "j", "ts", "f", "sh",
+    "ky", "gy", "ny", "hy", "by", "my", "py", "ry"
+]
+SPECIALS = ["cl", "N"]
 
-# for i, item in enumerate(top10_long, 1):
-#     print(f"{i:2d}. {item}")
+def count_phoneme_durations(data: list) -> tuple[dict, dict, dict]:
+    """音素データ中の子音, 母音, 特殊記号の総出現時間をカウントする.
 
+    与えられたデータ (音声学的解析結果など) を走査し,
+    各子音, 母音, 特殊記号の出現頻度を辞書形式で数える.
 
-# VOWELS = ["a", "i", "u", "e", "o"]
-# CONSONANT = [
-#     "k", "s", "t", "n", "h", "m", "y", "r", "w",
-#     "g", "z", "d", "b", "p", "ch", "j", "ts", "f", "sh",
-#     "ky", "gy", "ny", "hy", "by", "my", "py", "ry"
-# ]
-# SPECIALS = ["cl", "N"]
+    Args:
+        data: 音素情報のリスト.
+            各要素は以下のような形式で構成される.
+                [song, lyric, duration_msec, con, vow, spec]
 
-# def count_phoneme_durations(data: list) -> tuple[dict, dict, dict]:
-#     """音素データ中の子音, 母音, 特殊記号の総出現時間をカウントする.
+    Returns:
+        3つの辞書からなるタプル.
+            - consonant_counts: 子音ごとの総出現時間
+            - vowel_counts: 母音ごとの総出現時間
+            - special_counts: 特殊記号 (撥音, 促音など) の総出現時間
+    """
+    # カウント辞書初期化
+    v_durs = dict.fromkeys(VOWELS, 0)
+    c_durs = dict.fromkeys(CONSONANT, 0)
+    spec_durs = dict.fromkeys(SPECIALS, 0)
 
-#     与えられたデータ (音声学的解析結果など) を走査し,
-#     各子音, 母音, 特殊記号の出現頻度を辞書形式で数える.
+    # 各行を走査してカウント
+    for row in data:
+        con, vow, spec = row[3], row[4], row[5]
+        others_c = others_v = others_spec = 0
+        if con in c_durs:
+            c_durs[con] += 1
+        else:
+            others_c += 1
+        if vow in v_durs:
+            v_durs[vow] += 1
+        else:
+            others_v += 1
+        if spec in spec_durs:
+            spec_durs[spec] += 1
+        else:
+            others_spec += 1
 
-#     Args:
-#         data: 音素情報のリスト.
-#             各要素は以下のような形式で構成される.
-#                 [pitch, mora, consonant, vowel, special_symbol]
+    #print(f"Others - Consonant: {others_c}, Vowel: {others_v}, Special: {others_spec}")  # noqa: ERA001
+    return c_durs, v_durs, spec_durs
 
-#     Returns:
-#         3つの辞書からなるタプル.
-#             - consonant_counts: 子音ごとの総出現時間
-#             - vowel_counts: 母音ごとの総出現時間
-#             - special_counts: 特殊記号 (撥音, 促音など) の総出現時間
-#     """
-#     # カウント辞書初期化
-#     v_durs = dict.fromkeys(VOWELS, 0)
-#     c_durs = dict.fromkeys(CONSONANT, 0)
-#     spec_durs = dict.fromkeys(SPECIALS, 0)
+def plot_count_histogram(
+    count_dict: dict[str, float],
+    xlabel: str,
+    title: str,
+    folder: Path | None = None,
+    mode: str = "default",
+) -> None:
+    """音素の出現回数をヒストグラムとして描画・保存する.
 
-#     # 各行を走査してカウント
-#     for row in data:
-#         dur, bpm, con, vow, spec = row[2], row[3], row[4], row[5], row[6]
-#         others_c, others_v, others_spec = 0, 0, 0
-#         t = 60 * dur / bpm
-#         if con in c_durs:
-#             c_durs[con] += t
-#         else:
-#             others_c += 1
-#         if vow in v_durs:
-#             v_durs[vow] += t
-#         else:
-#             others_v += 1
-#         if spec in spec_durs:
-#             spec_durs[spec] += t
-#         else:
-#             others_spec += 1
+    与えられたカウント辞書をもとに, 子音, 母音, 特殊記号などの
+    出現頻度を棒グラフで可視化し, PNG 画像として保存する.
 
-#     #print(f"Others - Consonant: {others_c}, Vowel: {others_v}, Special: {others_spec}")  # noqa: ERA001
-#     return c_durs, v_durs, spec_durs
+    Args:
+        count_dict: 音素とその出現回数を対応付けた辞書.
+        xlabel: x軸ラベル (例: "Vowel", "Consonant").
+        title: グラフのタイトルおよび保存ファイル名 (拡張子を除く).
+        folder: 画像の保存先フォルダ (指定しない場合はスクリプトのあるフォルダ).
+        mode: プロットモード ("default" または "consonant").
+            "consonant" の場合は x軸ラベルを45°回転して描画する.
+    """
+    figure_folder = Path(__file__).parent if folder is None else folder
 
-# def plot_count_histogram(
-#     count_dict: dict[str, float],
-#     xlabel: str,
-#     title: str,
-#     folder: Path | None = None,
-#     mode: str = "default",
-# ) -> None:
-#     """音素の出現回数をヒストグラムとして描画・保存する.
+    keys = list(count_dict.keys())
+    values = list(count_dict.values())
+    length = sum(values)
+    rate=[]
+    for v in values:
+        prob = int(v*100/length)
+        rate.append(prob)
 
-#     与えられたカウント辞書をもとに, 子音, 母音, 特殊記号などの
-#     出現頻度を棒グラフで可視化し, PNG 画像として保存する.
+    if mode == "consonant":
+        plt.figure(figsize=(8, 8))
+        plt.xticks(rotation=45, fontsize=14)
+        plt.bar(keys, rate, color="0.2")
+        plt.xlabel(xlabel)
+        plt.ylabel("Occurrence Rate [%]")
+        plt.ylim([0,50])
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(figure_folder /  f"{title}.png")
+        plt.close()
+    else:
+        plt.figure(figsize=(8, 8))
+        plt.xlabel(xlabel)
+        plt.bar(keys, rate, color="0.2")
+        plt.xlabel(xlabel)
+        plt.ylabel("Occurrence Rate [%]")
+        plt.ylim([0,50])
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(figure_folder /  f"{title}.png")
+        plt.close()
 
-#     Args:
-#         count_dict: 音素とその出現回数を対応付けた辞書.
-#         xlabel: x軸ラベル (例: "Vowel", "Consonant").
-#         title: グラフのタイトルおよび保存ファイル名 (拡張子を除く).
-#         folder: 画像の保存先フォルダ (指定しない場合はスクリプトのあるフォルダ).
-#         mode: プロットモード ("default" または "consonant").
-#             "consonant" の場合は x軸ラベルを45°回転して描画する.
-#     """
-#     figure_folder = Path(__file__).parent if folder is None else folder
+def convert_csv(data:list, folder:Path, filename:str) -> None:
+    """リスト(または辞書のリスト)をDataFrameに変換し、CSVとして保存する関数。.
 
-#     keys = list(count_dict.keys())
-#     values = list(count_dict.values())
-#     # times = sum(values)
-#     #proportion = [v*100 / times for v in values]
+    Parameters
+    ----------
+    data : list
+        リスト、または辞書のリスト(例:[{"a":1, "b":2}, {"a":3, "b":4}])
+    folder : Path
+        CSVを保存するフォルダのパス(Path形式)
+    filename : str
+        保存するCSVファイル名(例:"output.csv")
+    """
+    # DataFrameに変換
+    df = pd.DataFrame(data)
+    filepath = folder / filename
+    # CSVとして保存(BOM付きUTF-8でExcelでも文字化けしにくい)
+    df.to_csv(filepath, index=False, encoding="utf-8-sig")
+    filepath = folder / filename
+    print(f"✅ CSVファイルを保存しました: {filepath}")
 
-#     if mode == "consonant":
-#         plt.figure(figsize=(8, 8))
-#         plt.xticks(rotation=45, fontsize=14)
-#         plt.xlabel(xlabel)
+convert_csv(Long, folder=data_folder, filename="exp02_Long.csv")
+convert_csv(SuperLong, folder=data_folder, filename="exp02_SuperLong.csv")
+convert_csv(Short, folder=data_folder, filename="exp02_Short.csv")
 
-#         # 総時間[ms] で示したい場合
-#         plt.bar(keys, values, color="0.2")
-#         plt.ylabel("Total Duration [sec]")
+slong_c, slong_v, slong_spec = count_phoneme_durations(SuperLong)
+long_c, long_v, long_spec = count_phoneme_durations(Long)
+short_c, short_v,  short_spec = count_phoneme_durations(Short)
 
-#         # 割合で示したい場合
-#         # plt.bar(keys, proportion)
-#         # plt.ylabel("Proportion of Total Duration [%]")
+_sl, _l, _s = "SuperLong", "Long", "Short"
+_vow, _con, _ss = "Vowel", "Consonant", "Special Symbol"
+base_title = "Count Distribution"
+# --- vowel (母音) ---
+vow_fig_dir = Path(data_folder) / "02exp_figures" / _vow
+plot_count_histogram(slong_v, xlabel=_vow, title=f"{_sl} {_vow} {base_title}", folder=vow_fig_dir)
+plot_count_histogram(long_v, xlabel=_vow, title=f"{_l} {_vow} {base_title}", folder=vow_fig_dir)
+plot_count_histogram(short_v, xlabel=_vow, title=f"{_s} {_vow} {base_title}", folder=vow_fig_dir)
 
-#         plt.title(title)
-#         plt.tight_layout()
-#         plt.savefig(figure_folder /  f"{title}.png")
-#         plt.close()
-#     else:
-#         plt.figure(figsize=(8, 8))
-#         plt.xlabel(xlabel)
-#         # 総時間[ms] で示したい場合
-#         plt.bar(keys, values, color="0.2")
-#         plt.ylabel("Total Duration [sec]")
+# --- consonant (子音) ---
+con_fig_dir = Path(data_folder) / "02exp_figures" / _con
+plot_count_histogram(slong_c, xlabel=_con, title=f"{_sl} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
+plot_count_histogram(long_c, xlabel=_con, title=f"{_l} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
+plot_count_histogram(short_c, xlabel=_con, title=f"{_s} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
 
-#         # 割合で示したい場合
-#         # plt.bar(keys, proportion)
-#         # plt.ylabel("Proportion of Total Duration [%]")
-
-#         plt.title(title)
-#         plt.tight_layout()
-#         plt.savefig(figure_folder /  f"{title}.png")
-#         plt.close()
-
-# high_c, high_v, high_spec = count_phoneme_durations(High)
-# mid_c, mid_v, mid_spec = count_phoneme_durations(Mid)
-# low_c, low_v,  low_spec = count_phoneme_durations(Low)
-
-# _hi, _mid, _low = "High", "Mid", "Low"
-# _vow, _con, _SS = "Vowel", "Consonant", "Special Symbol"
-# base_title = "Time Distribution"
-# # --- vowel (母音) ---
-# vow_fig_dir = Path(data_folder) / "02exp_figures" / _vow
-# plot_count_histogram(high_v, xlabel=_vow, title=f"{_hi} {_vow} {base_title}", folder=vow_fig_dir)
-# plot_count_histogram(mid_v, xlabel=_vow, title=f"{_mid} {_vow} {base_title}", folder=vow_fig_dir)
-# plot_count_histogram(low_v, xlabel=_vow, title=f"{_low} {_vow} {base_title}", folder=vow_fig_dir)
-
-# # --- consonant (子音) ---
-# con_fig_dir = Path(data_folder) / "02exp_figures" / _con
-# plot_count_histogram(high_c, xlabel=_con, title=f"{_hi} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
-# plot_count_histogram(mid_c, xlabel=_con, title=f"{_mid} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
-# plot_count_histogram(low_c, xlabel=_con, title=f"{_low} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
-
-# # --- special symbols (撥音・促音) ---
-# SS_fig_dir = Path(data_folder) / "02exp_figures" / _SS
-# plot_count_histogram(high_spec, xlabel=_SS, title=f"{_hi} {_SS} {base_title}", folder=SS_fig_dir)
-# plot_count_histogram(mid_spec, xlabel=_SS, title=f"{_mid} {_SS} {base_title}", folder=SS_fig_dir)
-# plot_count_histogram(low_spec, xlabel=_SS, title=f"{_low} {_SS} {base_title}", folder=SS_fig_dir)
+# --- special symbols (撥音・促音) ---
+SS_fig_dir = Path(data_folder) / "02exp_figures" / _ss
+plot_count_histogram(slong_spec, xlabel=_ss, title=f"{_sl} {_ss} {base_title}", folder=SS_fig_dir)
+plot_count_histogram(long_spec, xlabel=_ss, title=f"{_l} {_ss} {base_title}", folder=SS_fig_dir)
+plot_count_histogram(short_spec, xlabel=_ss, title=f"{_s} {_ss} {base_title}", folder=SS_fig_dir)
 
