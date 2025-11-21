@@ -1,6 +1,6 @@
 """Module for analyzing pitch and mora patterns in musical scores.
 
-This module processes MusicXML files to analyze the relationship between pitch heights and mora durations.
+This module processes MusicXML files to analyze the relationship between note duration and mora.
 """
 
 import sys
@@ -18,9 +18,6 @@ from utils.mora_analyzer import MoraAnalyzer
 from utils.musicxml_analyzer import MusicXmlAnalyzer
 
 plt.rcParams["font.size"] = 20
-
-
-#xml_path = r"C:\Users\610ry\OneDrive - MeijiMail\院ゼミ・研究関連\修士論文\東北きりたん歌唱データベース\kiritan_singing-master\musicxml\01.xml"  # noqa: E501, ERA001
 
 musicxml_analyzer = MusicXmlAnalyzer(pic_dir=None, strip_ties=True, include_grace=False)
 mora_analyzer = MoraAnalyzer()
@@ -50,10 +47,9 @@ def extract_notes_from_xml(xml_path: str) -> list[dict[str, object]]:
     data = []
     note_idx = 0
 
-    if musicxml_analyzer.strip_ties:
-        score = score.stripTies(inPlace=False)
+    tied_score = score.stripTies(inPlace=False)
 
-    for n in score.recurse().notes:
+    for n in tied_score.recurse().notes:
         if not isinstance(n, note.Note):
             continue
         if n.duration.isGrace or (n.duration.quarterLength or 0) == 0:
@@ -68,11 +64,47 @@ def extract_notes_from_xml(xml_path: str) -> list[dict[str, object]]:
             "note_idx": note_idx,
             "dur": float(n.duration.quarterLength),
             "BPM": bpm,
-            "lyric": (n.lyric or "").strip()
+            "lyric": n.lyric if n.lyric else np.nan
         })
         note_idx += 1
 
     return data
+
+def merge_lyricless_notes(df: pd.DataFrame) -> pd.DataFrame:
+    """歌詞が NaN / 空のノートを、同じ曲の直前ノートに dur だけ足して結合する.
+
+    前のノートが存在しない(曲の先頭が歌詞なしなど)の行は捨てる。
+    """
+    df = df.sort_values(["song", "note_idx"]).reset_index(drop=True)
+
+    merged_rows: list[dict[str, object]] = []
+
+    for _, row in df.iterrows():
+        song = row["song"]
+        note_idx = row["note_idx"]
+        dur = row["dur"]
+        bpm = row["BPM"]
+        lyric = row["lyric"]
+
+        # 歌詞が空 or NaN なら前の行にマージ
+        if (pd.isna(lyric) or str(lyric).strip() == ""):
+            if merged_rows and merged_rows[-1]["song"] == song:
+                # 同じ曲の直前ノートに dur だけ足す
+                merged_rows[-1]["dur"] += dur
+            else:
+                # 曲頭が歌詞なし等 → モーラ分析には使わないので捨てる
+                pass
+        else:
+            # 歌詞ありノートはそのまま追加
+            merged_rows.append({
+                "song": song,
+                "note_idx": note_idx,
+                "dur": dur,
+                "BPM": bpm,
+                "lyric": str(lyric).strip(),
+            })
+
+    return pd.DataFrame(merged_rows)
 
 def aggregate_note_data(folder: str) -> pd.DataFrame:
     """指定フォルダ内の MusicXML ファイルをすべて解析し, 音符情報を集約する.
@@ -97,10 +129,11 @@ def aggregate_note_data(folder: str) -> pd.DataFrame:
 
 # ここから実行部分
 data_folder = Path(Path(__file__).parent) / "data"
-print(data_folder)
+print("Data Folder: ", data_folder)
 row_csv = Path(data_folder) / "exp02_all_songs_row.csv" #生データ
 normalized_csv = Path(data_folder) / "normalized_lyrics.csv" #正規化だけしたデータ
 valid_csv = Path(data_folder) / "all_mora_analysis.csv" #分析対象データ
+invalid_csv = Path(data_folder) / "invalid_mora.csv"
 
 if Path(row_csv).is_file():
     print("exp02_all_songs_row.csv exists")
@@ -109,6 +142,7 @@ else:
     print("exp02_all_songs_row.csv doesn't exist")
     folder = r"C:\Users\610ry\OneDrive - MeijiMail\院ゼミ・研究関連\修士論文\東北きりたん歌唱データベース\kiritan_singing-master\musicxml"  # noqa: E501
     df = aggregate_note_data(folder=folder)
+    df_merged = merge_lyricless_notes(df=df)
     #とりあえずバックアップ
     df.to_csv(row_csv, index=False, encoding="utf-8-sig")
 
@@ -119,25 +153,40 @@ if Path(normalized_csv).is_file():
 # 文字の正規化処理をしていない場合、ここで実行
 else:
     print("normalized_lyrics.csv doesn't exist")
-    lyrics = df["lyric"].tolist()
-    for i in range(1, len(lyrics)):
-        mora = lyrics[i]
-        if mora == "ー":
-            prev_vowel = mora_analyzer.vowel_of_mora(lyrics[i-1])
-            lyrics[i] = prev_vowel
-        elif mora in {"う゛" , "ゔ"}:
-            lyrics[i] = "ヴ"
+    df_merged["lyric"] = df_merged["lyric"].fillna("").astype(str).str.strip()
+    lyrics = df_merged["lyric"].tolist()
+    norm_lyrics: list[str] = []
+    for i, mora in enumerate(lyrics):
+        add_mora = mora
+        if "う゛" in mora:
+            add_mora = mora.replace("う゛", "ヴ")
+        elif "ゔ" in mora:
+            add_mora = mora.replace("ゔ", "ヴ")
         elif mora == "を":
-            lyrics[i] = "お"
+            add_mora = "お"
+
+        if mora == "ー":
+            try:
+                prev_mora = norm_lyrics[i-1]
+                prev_vowel = mora_analyzer.vowel_of_mora(prev_mora)
+                add_mora = prev_vowel
+            except (IndexError, ValueError) as e:
+                print(f"Chouon fallback: {e}")
+                add_mora = "ー"
+
+        norm_lyrics.append(add_mora)
+    lyrics = norm_lyrics
 
     #モーラを正規化したリストで上書き
-    df["lyric"] = lyrics
+    df_merged["lyric"] = lyrics
 
     # 1) 有効行だけ残すmaskを作る(空白とnotna(Nan)を除外)、有効行だけ抽出
-    mask = df["lyric"].notna() & df["lyric"].str.strip().ne("")
-    df_valid = df.loc[mask, ["song", "lyric", "dur", "BPM"]].copy()
+    mask = df_merged["lyric"].notna() & df_merged["lyric"].str.strip().ne("")
+    df_valid = df_merged.loc[mask, ["song", "lyric", "dur", "BPM"]].copy()
+    df_invalid = df_merged.loc[~mask, ["song", "lyric", "dur", "BPM"]].copy()
     # --- 前後空白を落としておくと後段が安定 ---
     df_valid["lyric"] = df_valid["lyric"].str.strip()
+    df_invalid["lyric"] = df_invalid["lyric"].str.strip()
     df_valid.to_csv(normalized_csv, index=False, encoding="utf-8-sig")
 
 if Path(valid_csv).is_file():
@@ -149,7 +198,6 @@ else:
 # all_mora は object 配列で
 df_valid["lyric"] = df_valid["lyric"].fillna("").astype(str).str.strip()
 all_mora = df_valid.to_numpy(object)
-
 print(df_valid.columns)
 
 valid, excluded = [], []
@@ -249,6 +297,8 @@ for song, lyric, dur, bpm in all_mora:
 
 df_mora_analysis = pd.DataFrame(valid, columns=["song", "lyric","dur", "BPM", "consonant", "vowel", "special"])
 df_mora_analysis.to_csv(valid_csv, index=False, encoding="utf-8-sig")
+df_excluded = pd.DataFrame(excluded, columns=["song", "lyric", "dur", "bpm"])
+df_excluded.to_csv(invalid_csv, index=False, encoding="utf-8-sig")
 
 # 各ヒストグラムを描画
 
@@ -256,7 +306,7 @@ dur = df_mora_analysis["dur"]
 bpm = df_mora_analysis["BPM"]
 dur_msec =(60 * 1000 * dur / bpm).astype(int)
 
-bin_width =5 # msec
+bin_width =10 # msec
 long_threshold = 800 # 超長い音符の場合(ms)、ロングトーンとして別扱いにする
 
 # 音符ごとのBPMのヒストグラム描画
@@ -268,11 +318,11 @@ plt.xlabel("BPM")
 plt.ylabel("Number of Songs")
 plt.title("BPM Distribution per Song")
 plt.tight_layout()
-b_histgram_fig_path = Path(data_folder) / "02exp_figures" /  "BPM_distribution.png"
+figures_02exp = Path(data_folder) / "02exp_figures"
+figures_02exp.mkdir(exist_ok=True)
+b_histgram_fig_path = figures_02exp /  "BPM_distribution.png"
 plt.savefig(b_histgram_fig_path, bbox_inches="tight")
 plt.close()
-print("BPM (Mean): ", np.mean(unique_bpm))
-print("BPM (Median): ", np.median(unique_bpm))
 
 # 3) ヒストグラム描画
 plt.figure(figsize=(10, 6))
@@ -304,7 +354,7 @@ Long = []
 Short = []
 
 s_long_count = long_count = short_count = 0
-dur_threshold =250
+dur_threshold =300
 
 for song, lyric, dur, bpm, con, vow, spec in df_mora_analysis.to_numpy(object):
     duration_msec = int (1000 * 60 * dur / bpm ) #ms単位にそろえるために1000をかける
@@ -324,8 +374,16 @@ VOWELS = ["a", "i", "u", "e", "o"]
 CONSONANT = [
     "k", "s", "t", "n", "h", "m", "y", "r", "w",
     "g", "z", "d", "b", "p", "ch", "j", "ts", "f", "sh",
-    "ky", "gy", "ny", "hy", "by", "my", "py", "ry"
+    "ky", "gy", "ny", "hy", "by", "my", "py", "ry", "dy", "ty", "v"
 ]
+
+nasal = ["n", "m", "ny", "my"] # nasal >> 鼻音(マ行・ナ行・鼻濁音のガ(カ゜)行)
+plosive = ["b", "p", "d", "t", "g", "k", "by", "py", "dy", "ty", "gy", "ky"] # plosive >> 破裂音(カ行・ガ行・タテト・ダデド・パ行・バ行)  # noqa: E501
+#affricate = ["ch", "j", "ts"] # affricate >> 破擦音(チ・ツ・語頭のザ行(ヂズも))  # noqa: ERA001
+fricative = ["s", "sh", "z", "f", "h", "hy", "v", "ch", "j", "ts"] # fricative >> 摩擦音(サ行・ハ行・語中のザ行(ヂズも))
+tap = ["r", "ry"] # tap >> 弾き音(ラ行)# nasal >> 鼻音(マ行・ナ行・鼻濁音のガ(カ゜)行)
+approximant = ["y", "w"] # approximant >> 接近音(ヤ行、ワ行)
+
 SPECIALS = ["cl", "N"]
 
 def count_phoneme_durations(data: list) -> tuple[dict, dict, dict]:
@@ -372,10 +430,9 @@ def count_phoneme_durations(data: list) -> tuple[dict, dict, dict]:
 
 def plot_count_histogram(
     count_dict: dict[str, float],
-    xlabel: str,
     title: str,
-    folder: Path | None = None,
-    mode: str = "default",
+    mode: str,
+    folder: Path | None = None
 ) -> None:
     """音素の出現回数をヒストグラムとして描画・保存する.
 
@@ -387,8 +444,7 @@ def plot_count_histogram(
         xlabel: x軸ラベル (例: "Vowel", "Consonant").
         title: グラフのタイトルおよび保存ファイル名 (拡張子を除く).
         folder: 画像の保存先フォルダ (指定しない場合はスクリプトのあるフォルダ).
-        mode: プロットモード ("default" または "consonant").
-            "consonant" の場合は x軸ラベルを45°回転して描画する.
+        mode: プロットモード (Vowel, Consonant, Special Symbol).
     """
     figure_folder = Path(__file__).parent if folder is None else folder
 
@@ -400,28 +456,113 @@ def plot_count_histogram(
         prob = int(v*100/length)
         rate.append(prob)
 
-    if mode == "consonant":
-        plt.figure(figsize=(8, 8))
-        plt.xticks(rotation=45, fontsize=14)
+    mode_settings: dict[str, dict[str, any]] = {
+        "Consonant": {
+            "figsize": (12, 8),
+            "xlabel": "Consonant",
+            "ylim": (0, 30),
+        },
+        "Vowel": {
+            "figsize": (8, 8),
+            "xlabel": "Vowel",
+            "ylim": (0, 40),
+        },
+        "Special Symbol": {
+            "figsize": (8, 8),
+            "xlabel": "Special Symbol",
+            "ylim": (0, 100),
+        }
+    }
+
+    if mode not in mode_settings:
+        print("適切な mode を選んでください")
+    else:
+        cfg = mode_settings[mode]
+
+        plt.figure(figsize=cfg["figsize"])
         plt.bar(keys, rate, color="0.2")
-        plt.xlabel(xlabel)
+        plt.xlabel(cfg["xlabel"])
         plt.ylabel("Occurrence Rate [%]")
-        plt.ylim([0,50])
+        plt.ylim(cfg["ylim"])
         plt.title(title)
         plt.tight_layout()
-        plt.savefig(figure_folder /  f"{title}.png")
+        plt.savefig(figure_folder / f"{title}.png")
+        plt.close()
+
+def  plot_art_histgram(
+        full_dict: dict[str, int],
+        key_list: list[str],
+        title: str,
+        folder: Path,
+        ylim: list[int, int] | None = None
+        ) -> None:
+    """full_count_dict の中から target_list で指定した音素のみを抽出し、全体に対する割合 [%] を計算してプロットする関数.
+
+    この関数は full_count_dict に含まれる音素の出現数をもとに、
+    対象の音素だけを取り出して割合を算出し、棒グラフとして保存します。
+
+    Parameters:
+    ----------
+    full_count_dict : dict[str, int]
+        全音素の出現回数を保持する辞書。
+        例:{"k": 1200, "s": 900, ...}
+
+    target_list : list[str]
+        抽出したい音素のリスト。
+        例:["k", "s", "t"]
+
+    title : str
+        プロットにつけるタイトル。
+
+    folder : Path
+        画像を保存するフォルダのパス。
+
+    Returns:
+    -------
+    None
+        プロット画像を保存するだけで、計算結果は返さない。
+    """
+    if ylim is None:
+        ylim = [0, 100]
+    total = sum(full_dict.values())
+    #print("Total Mora Count: ", total)  # noqa: ERA001
+    selected: dict[str, int] = {}
+    # ① 抽出 (select_articulation と同じ役割)
+    for key, value in full_dict.items():
+        if key in key_list:
+            selected[key] = value
+        else:
+            continue
+    selected_rate: dict[str, float] = {}
+    for key, value in selected.items():
+        rate = round(value*100/total, 2)
+        selected_rate[key] = rate
+    key_num = len(key_list)
+    thresh_key_num = 5
+
+    if key_num > thresh_key_num:
+        plt.figure(figsize=(12, 9))
+        plt.xticks(rotation=45, fontsize=14)
+        plt.xlabel("Consonant")
+        plt.ylim(ylim)
+        plt.bar(list(selected_rate.keys()), list(selected_rate.values()) , color="0.2")
+        plt.ylabel("Occurrence Rate [%]")
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(folder / f"{title}.png")
         plt.close()
     else:
-        plt.figure(figsize=(8, 8))
-        plt.xlabel(xlabel)
-        plt.bar(keys, rate, color="0.2")
-        plt.xlabel(xlabel)
+        plt.figure(figsize=(10, 8))
+        plt.xticks(rotation=45, fontsize=14)
+        plt.xlabel("Consonant")
+        plt.ylim(ylim)
+        plt.bar(list(selected_rate.keys()), list(selected_rate.values()) , color="0.2")
         plt.ylabel("Occurrence Rate [%]")
-        plt.ylim([0,50])
         plt.title(title)
         plt.tight_layout()
-        plt.savefig(figure_folder /  f"{title}.png")
+        plt.savefig(folder / f"{title}.png")
         plt.close()
+
 
 def convert_csv(data:list, folder:Path, filename:str) -> None:
     """リスト(または辞書のリスト)をDataFrameに変換し、CSVとして保存する関数。.
@@ -443,10 +584,6 @@ def convert_csv(data:list, folder:Path, filename:str) -> None:
     filepath = folder / filename
     print(f"✅ CSVファイルを保存しました: {filepath}")
 
-convert_csv(Long, folder=data_folder, filename="exp02_Long.csv")
-convert_csv(SuperLong, folder=data_folder, filename="exp02_SuperLong.csv")
-convert_csv(Short, folder=data_folder, filename="exp02_Short.csv")
-
 slong_c, slong_v, slong_spec = count_phoneme_durations(SuperLong)
 long_c, long_v, long_spec = count_phoneme_durations(Long)
 short_c, short_v,  short_spec = count_phoneme_durations(Short)
@@ -454,21 +591,81 @@ short_c, short_v,  short_spec = count_phoneme_durations(Short)
 _sl, _l, _s = "SuperLong", "Long", "Short"
 _vow, _con, _ss = "Vowel", "Consonant", "Special Symbol"
 base_title = "Count Distribution"
-# --- vowel (母音) ---
+_nas, _plo, _fric, _tap, _app = "Nasal", "Plosive", "Fricative", "Tap", "Approximant"
+
+# # --- vowel (母音) ---
 vow_fig_dir = Path(data_folder) / "02exp_figures" / _vow
-plot_count_histogram(slong_v, xlabel=_vow, title=f"{_sl} {_vow} {base_title}", folder=vow_fig_dir)
-plot_count_histogram(long_v, xlabel=_vow, title=f"{_l} {_vow} {base_title}", folder=vow_fig_dir)
-plot_count_histogram(short_v, xlabel=_vow, title=f"{_s} {_vow} {base_title}", folder=vow_fig_dir)
+vow_fig_dir.mkdir(exist_ok=True)
+plot_count_histogram(slong_v, title=f"{_sl} {_vow} {base_title}", folder=vow_fig_dir, mode=_vow)
+plot_count_histogram(long_v,  title=f"{_l} {_vow} {base_title}", folder=vow_fig_dir, mode=_vow)
+plot_count_histogram(short_v, title=f"{_s} {_vow} {base_title}", folder=vow_fig_dir, mode=_vow)
 
 # --- consonant (子音) ---
 con_fig_dir = Path(data_folder) / "02exp_figures" / _con
-plot_count_histogram(slong_c, xlabel=_con, title=f"{_sl} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
-plot_count_histogram(long_c, xlabel=_con, title=f"{_l} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
-plot_count_histogram(short_c, xlabel=_con, title=f"{_s} {_con} {base_title}", folder=con_fig_dir, mode="consonant")
+con_fig_dir.mkdir(exist_ok=True)
 
+#-------------------------------------------------------------------------------------------------------------------------------------------------------
+# - consonant (子音全体) -
+plot_count_histogram(slong_c, title=f"{_sl} {_con} {base_title}", folder=con_fig_dir, mode=_con)
+plot_count_histogram(long_c,  title=f"{_l} {_con} {base_title}", folder=con_fig_dir, mode=_con)
+plot_count_histogram(short_c,  title=f"{_s} {_con} {base_title}", folder=con_fig_dir, mode=_con)
+
+#-------------------------------------------------------------------------------------------------------------------------------------------------------
+# -- nasal (鼻音) --
+nas_dir = con_fig_dir / _nas
+nas_dir.mkdir(exist_ok=True)
+plot_art_histgram(full_dict=slong_c, key_list=nasal,
+                   title=f"{_sl} {_nas} {base_title}", folder=nas_dir, ylim=[0,20])
+plot_art_histgram(full_dict=long_c, key_list=nasal,
+                   title=f"{_l} {_nas} {base_title}", folder=nas_dir, ylim=[0,20])
+plot_art_histgram(full_dict=short_c, key_list=nasal,
+                   title=f"{_s} {_nas} {base_title}", folder=nas_dir, ylim=[0,20])
+
+# -- plosive (破裂音) --
+plo_dir = con_fig_dir / _plo
+plo_dir.mkdir(exist_ok=True)
+plot_art_histgram(full_dict=slong_c, key_list=plosive,
+                   title=f"{_sl} {_plo} {base_title}", folder=plo_dir, ylim=[0,20])
+plot_art_histgram(full_dict=long_c, key_list=plosive,
+                   title=f"{_l} {_plo} {base_title}", folder=plo_dir, ylim=[0,20])
+plot_art_histgram(full_dict=short_c, key_list=plosive,
+                   title=f"{_s} {_plo} {base_title}", folder=plo_dir, ylim=[0,20])
+
+# -- fricative (摩擦音, 破擦音を一時的にまとめたもの) --
+fric_dir = con_fig_dir / _fric
+fric_dir.mkdir(exist_ok=True)
+plot_art_histgram(full_dict=slong_c, key_list=fricative,
+                  title=f"{_sl} {_fric} {base_title}", folder=fric_dir, ylim=[0,10])
+plot_art_histgram(full_dict=long_c, key_list=fricative,
+                   title=f"{_l} {_fric} {base_title}", folder=fric_dir, ylim=[0,10])
+plot_art_histgram(full_dict=short_c, key_list=fricative,
+                   title=f"{_s} {_fric} {base_title}", folder=fric_dir, ylim=[0,10])
+
+# -- tap (弾き音) --
+tap_dir = con_fig_dir / _tap
+tap_dir.mkdir(exist_ok=True)
+plot_art_histgram(full_dict=slong_c, key_list=tap,
+                   title=f"{_sl} {_tap} {base_title}", folder=tap_dir, ylim=[0,20])
+plot_art_histgram(full_dict=long_c, key_list=tap,
+                   title=f"{_l} {_tap} {base_title}", folder=tap_dir, ylim=[0,20])
+plot_art_histgram(full_dict=short_c, key_list=tap,
+                   title=f"{_s} {_tap} {base_title}", folder=tap_dir, ylim=[0,20])
+
+# -- tap (弾き音) --
+app_dir = con_fig_dir / _app
+app_dir.mkdir(exist_ok=True)
+plot_art_histgram(full_dict=slong_c, key_list=approximant,
+                   title=f"{_sl} {_app} {base_title}", folder=app_dir, ylim=[0,10])
+plot_art_histgram(full_dict=long_c, key_list=approximant,
+                   title=f"{_l} {_app} {base_title}", folder=app_dir, ylim=[0,10])
+plot_art_histgram(full_dict=short_c, key_list=approximant,
+                   title=f"{_s} {_app} {base_title}", folder=app_dir, ylim=[0,10])
+
+#-------------------------------------------------------------------------------------------------------------------------------------------------------
 # --- special symbols (撥音・促音) ---
 SS_fig_dir = Path(data_folder) / "02exp_figures" / _ss
-plot_count_histogram(slong_spec, xlabel=_ss, title=f"{_sl} {_ss} {base_title}", folder=SS_fig_dir)
-plot_count_histogram(long_spec, xlabel=_ss, title=f"{_l} {_ss} {base_title}", folder=SS_fig_dir)
-plot_count_histogram(short_spec, xlabel=_ss, title=f"{_s} {_ss} {base_title}", folder=SS_fig_dir)
+SS_fig_dir.mkdir(exist_ok=True)
+plot_count_histogram(slong_spec, title=f"{_sl} {_ss} {base_title}", folder=SS_fig_dir, mode=_ss)
+plot_count_histogram(long_spec, title=f"{_l} {_ss} {base_title}", folder=SS_fig_dir, mode=_ss)
+plot_count_histogram(short_spec, title=f"{_s} {_ss} {base_title}", folder=SS_fig_dir, mode=_ss)
 
