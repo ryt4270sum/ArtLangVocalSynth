@@ -1,13 +1,12 @@
-"""Module for analyzing pitch and mora patterns in musical scores.
+"""Module for analyzing note duration and mora patterns in musical scores.
 
-This module processes MusicXML files to analyze the relationship between pitch and mora occurrences.
+This module processes MusicXML files to analyze the relationship between note duration and mora.
 """
 
 import sys
 from pathlib import Path
 
 sys.path.append(str((Path(__file__).parent.parent.parent).resolve()))
-
 
 import japanize_matplotlib  # noqa: F401
 import matplotlib.pyplot as plt
@@ -24,20 +23,20 @@ mora_analyzer = MoraAnalyzer()
 # ここから実行部分
 data_folder = Path(Path(__file__).parent) / "data"
 print("Data Folder: ", data_folder)
-row_csv = Path(data_folder) / "exp01_all_songs_row.csv" #生データ
+row_csv = Path(data_folder) / "exp03_all_songs_row.csv" #生データ
 normalized_csv = Path(data_folder) / "normalized_lyrics.csv" #正規化だけしたデータ
 valid_csv = Path(data_folder) / "all_mora_analysis.csv" #分析対象データ
 invalid_csv = Path(data_folder) / "invalid_mora.csv"
 
 if Path(row_csv).is_file():
-    print("exp01_all_songs_row.csv exists")
-    df_row = pd.read_csv(row_csv)
+    print("exp03_all_songs_row.csv exists")
+    df = pd.read_csv(row_csv)
 else:
-    print("exp01_all_songs_row.csv doesn't exist")
+    print("exp03_all_songs_row.csv doesn't exist")
     folder = r"C:\Users\610ry\OneDrive - MeijiMail\院ゼミ・研究関連\修士論文\東北きりたん歌唱データベース\kiritan_singing-master\musicxml"  # noqa: E501
     xml_data = MusicXmlData(str(folder))
-    df_row = xml_data.exp01_load()
-    print("=== exp01 df (with relative_pitch) ===")
+    df_row = xml_data.exp02_load()
+    print("=== exp02 df (with relative_pitch) ===")
     print(df_row.head())
     print(df_row.tail())
     print(df_row.columns)
@@ -54,7 +53,7 @@ else:
     df_row["lyric"] = df_row["lyric"].fillna("").astype(str).str.strip()
     lyrics = df_row["lyric"].tolist()
     norm_lyrics: list[str] = []
-    for i ,mora in enumerate(lyrics):
+    for i, mora in enumerate(lyrics):
         add_mora = mora
         if "う゛" in mora:
             add_mora = mora.replace("う゛", "ヴ")
@@ -63,14 +62,15 @@ else:
         elif mora == "を":
             add_mora = "お"
 
-        if mora =="ー":
+        if mora == "ー":
             try:
                 prev_mora = norm_lyrics[i-1]
                 prev_vowel = mora_analyzer.vowel_of_mora(prev_mora)
                 add_mora = prev_vowel
-            except(IndexError, ValueError) as e:
+            except (IndexError, ValueError) as e:
                 print(f"Chouon fallback: {e}")
                 add_mora = "ー"
+
         norm_lyrics.append(add_mora)
     lyrics = norm_lyrics
 
@@ -79,8 +79,8 @@ else:
 
     # 1) 有効行だけ残すmaskを作る(空白とnotna(Nan)を除外)、有効行だけ抽出
     mask = df_row["lyric"].notna() & df_row["lyric"].str.strip().ne("")
-    df_valid = df_row.loc[mask, ["song", "pitch", "relative_pitch", "lyric"]].copy()
-    df_invalid = df_row.loc[~mask, ["song", "pitch", "relative_pitch", "lyric"]].copy()
+    df_valid = df_row.loc[mask, ["song", "lyric", "dur", "BPM"]].copy()
+    df_invalid = df_row.loc[~mask, ["song", "lyric", "dur", "BPM"]].copy()
     # --- 前後空白を落としておくと後段が安定 ---
     df_valid["lyric"] = df_valid["lyric"].str.strip()
     df_invalid["lyric"] = df_invalid["lyric"].str.strip()
@@ -99,28 +99,33 @@ all_mora = df_valid.to_numpy(object)
 valid, excluded = [], []
 second_mora_exclude = {"っ", "ん", "あ", "い", "う", "え", "お", "ー"}
 
-for song, pitch, rel_pitch, lyric in all_mora:
+for song, lyric, dur, bpm in all_mora:
     moras, mora_count = mora_analyzer.split_moras(lyric)  # ← lyric は文字列化済み
     single_mora = 1
     double_mora = 2
 
+    #↓文献引用欲しいよね[]
+    n_weight = 0.5 #二文字目が「ん」の場合の時間分割の割合
+    cl_weight = 0.5 #二文字目が「っ」の場合の時間分割の割合
+    dvow_weight = 0.5 #二文字目が母音の場合の時間分割の割合
+
     if mora_count == single_mora:
         mora = moras[0]
-        ph = mora_analyzer.get_phonemes(mora)                     # ★音素化
-        consonant = mora_analyzer.get_consonant(ph)               # ★音素配列を渡す
-        vowel     = mora_analyzer.get_vowel(ph, mode="first")     # ★同上
+        ph = mora_analyzer.get_phonemes(mora)                     # 音素化
+        consonant = mora_analyzer.get_consonant(ph)               # 音素配列を渡す
+        vowel     = mora_analyzer.get_vowel(ph, mode="first")     # 同上
         special   = mora_analyzer.get_special_symbol(ph)
-        valid.append([song, mora, pitch, rel_pitch, consonant, vowel, special])
+        valid.append([song, mora, dur, bpm, consonant, vowel, special])
 
     elif mora_count == double_mora:
-        if moras[1] in second_mora_exclude:
+        if moras[1] == "っ":
             # 1 つ目
             ph1 = mora_analyzer.get_phonemes(moras[0])
             valid.append([
                 song,
                 moras[0],
-                pitch,
-                rel_pitch,
+                dur*(1-cl_weight),
+                bpm,
                 mora_analyzer.get_consonant(ph1),
                 mora_analyzer.get_vowel(ph1, mode="first"),
                 mora_analyzer.get_special_symbol(ph1)
@@ -130,61 +135,139 @@ for song, pitch, rel_pitch, lyric in all_mora:
             valid.append([
                 song,
                 moras[1],
-                pitch,
-                rel_pitch,
+                dur*cl_weight,
+                bpm,
+                mora_analyzer.get_consonant(ph2),
+                mora_analyzer.get_vowel(ph2, mode="first"),
+                mora_analyzer.get_special_symbol(ph2)
+            ])
+        elif moras[1] == "ん":
+            ph1 = mora_analyzer.get_phonemes(moras[0])
+            valid.append([
+                song,
+                moras[0],
+                dur*(1-n_weight),
+                bpm,
                 mora_analyzer.get_consonant(ph1),
                 mora_analyzer.get_vowel(ph1, mode="first"),
                 mora_analyzer.get_special_symbol(ph1)
             ])
+            # 2 つ目
+            ph2 = mora_analyzer.get_phonemes(moras[1])
+            valid.append([
+                song,
+                moras[1],
+                dur*n_weight,
+                bpm,
+                mora_analyzer.get_consonant(ph2),
+                mora_analyzer.get_vowel(ph2, mode="first"),
+                mora_analyzer.get_special_symbol(ph2)
+            ])
+        elif moras[1] in second_mora_exclude:
+            ph1 = mora_analyzer.get_phonemes(moras[0])
+            valid.append([
+                song,
+                moras[0],
+                dur*(1-dvow_weight),
+                bpm,
+                mora_analyzer.get_consonant(ph1),
+                mora_analyzer.get_vowel(ph1, mode="first"),
+                mora_analyzer.get_special_symbol(ph1)
+            ])
+            # 2 つ目
+            ph2 = mora_analyzer.get_phonemes(moras[1])
+            valid.append([
+                song,
+                moras[1],
+                dur*dvow_weight,
+                bpm,
+                mora_analyzer.get_consonant(ph2),
+                mora_analyzer.get_vowel(ph2, mode="first"),
+                mora_analyzer.get_special_symbol(ph2)
+            ])
         else:
-            excluded.append([song, lyric, pitch, rel_pitch])
+            excluded.append([song, lyric, dur, bpm])
 
     else:  # count >= 3
-        excluded.append([song, lyric, pitch, rel_pitch])
+        excluded.append([song, lyric, dur, bpm])
 
-fig_folder = Path(data_folder) / "01exp_figures"
+fig_folder = Path(data_folder) / "02exp_figures"
 fig_folder.mkdir(exist_ok=True)
 
-df_mora_analysis = pd.DataFrame(valid, columns=["song", "lyric", "pitch", "relative_pitch", "consonant", "vowel", "special"])  # noqa: E501
+df_mora_analysis = pd.DataFrame(valid, columns=["song", "lyric","dur", "BPM", "consonant", "vowel", "special"])
 df_mora_analysis.to_csv(valid_csv, index=False, encoding="utf-8-sig")
-df_excluded = pd.DataFrame(excluded, columns=["song", "lyric", "pitch", "rel_pitch"])
+df_excluded = pd.DataFrame(excluded, columns=["song", "lyric", "dur", "bpm"])
 df_excluded.to_csv(invalid_csv, index=False, encoding="utf-8-sig")
-# 相対音高のヒストグラムを調べる(音域ごとに偏りがないか確認するため)  # noqa: ERA001
 
-valid_pitches = df_mora_analysis["relative_pitch"].astype(int)
-bins = np.arange(valid_pitches.min() - 0.5, valid_pitches.max() + 1.5, 1).tolist()
+# 各ヒストグラムを描画
 
+dur = df_mora_analysis["dur"]
+bpm = df_mora_analysis["BPM"]
+dur_msec =(60 * 1000 * dur / bpm).astype(int)
 
+bin_width =10 # msec
+long_threshold = 800 # 超長い音符の場合(ms)、ロングトーンとして別扱いにする
+
+# 音符ごとのBPMのヒストグラム描画
+unique_bpm = df_mora_analysis.drop_duplicates(subset="song")["BPM"].copy()
+plt.figure(figsize=(10, 6))
+b_bin = np.arange(80, unique_bpm.max()+5, 5).tolist()
+plt.hist(unique_bpm, bins=b_bin, edgecolor="white", color="0.2")
+plt.xlabel("BPM")
+plt.ylabel("Number of Songs")
+plt.title("BPM Distribution per Song")
+plt.tight_layout()
+figures_02exp = Path(data_folder) / "02exp_figures"
+figures_02exp.mkdir(exist_ok=True)
+b_histgram_fig_path = figures_02exp /  "BPM_distribution.png"
+plt.savefig(b_histgram_fig_path, bbox_inches="tight")
+plt.close()
 
 # 3) ヒストグラム描画
-plt.figure(figsize=(16, 8))
-plt.hist(valid_pitches, bins=bins, edgecolor="white", color="0.2")
-plt.xlabel("Normalized Pitch (MIDI Note Number - median)")
+plt.figure(figsize=(10, 6))
+n_bin = np.arange(0,dur.max(), 0.5).tolist()
+plt.hist(dur, bins=n_bin, edgecolor="white", color="0.2")
+plt.xlabel("Note Value (Quarter Note = 1.0)")
 plt.ylabel("Count")
-plt.title("Relative Pitch Count")
-plt.xticks(range(int(valid_pitches.min()), int(valid_pitches.max() + 1)),  rotation=0, fontsize=16)
+plt.title("Distribution of Note Durations (beat units)")
 plt.tight_layout()
-histgram_fig_path = fig_folder /  "relative_pitch_count.png"
+n_histgram_fig_path = Path(data_folder) / "02exp_figures" /  "NoteDuration_distribution.png"
+plt.savefig(n_histgram_fig_path, bbox_inches="tight")
+plt.close()
+
+# 実時間のヒストグラム描画
+bins = np.arange(0, long_threshold, bin_width).tolist()
+plt.figure(figsize=(10, 6))
+plt.hist(dur_msec, bins=bins, edgecolor="white", color="0.2")
+plt.xlabel("Note Duration [ms]")
+plt.ylabel("Count")
+plt.title(f"Duration Histogram (bin width = {bin_width} ms)")
+plt.tight_layout()
+histgram_fig_path = Path(data_folder) / "02exp_figures" /  "NoteDuration_ms_distribution.png"
 plt.savefig(histgram_fig_path, bbox_inches="tight")
 plt.close()
 
 
-High = []
-Mid = []
-Low = []
+SuperLong = []
+Long = []
+Short = []
 
-for _, mora, _, rel_pitch, consonant, vowel, special in df_mora_analysis.to_numpy(object):
-    if rel_pitch > 1:
-        High.append([rel_pitch, mora, consonant, vowel, special])
-    elif rel_pitch < -1:
-        Low.append([rel_pitch, mora, consonant, vowel, special])
+s_long_count = long_count = short_count = 0
+dur_threshold =300
+
+for song, lyric, dur, bpm, con, vow, spec in df_mora_analysis.to_numpy(object):
+    duration_msec = int (1000 * 60 * dur / bpm ) #ms単位にそろえるために1000をかける
+    if  duration_msec >= long_threshold:
+        SuperLong.append([song, lyric, duration_msec, con, vow, spec])
+    elif duration_msec >= dur_threshold:
+        Long.append([song, lyric, duration_msec, con, vow, spec])
     else:
-        Mid.append([rel_pitch, mora, consonant, vowel, special])
+        Short.append([song, lyric, duration_msec, con, vow, spec])
 
-print("High: ", len(High))
-print("Mid: ", len(Mid))
-print("Low: ", len(Low))
-print("Total: ", len(High)+len(Mid)+len(Low))
+print("SuperLong: ", len(SuperLong))
+print("Long: ", len(Long))
+print("Short: ", len(Short))
+print("Total: ", len(SuperLong)+len(Long)+len(Short))
 
 VOWELS = ["a", "i", "u", "e", "o"]
 CONSONANT = [
@@ -202,10 +285,8 @@ approximant = ["y", "w"] # approximant >> 接近音(ヤ行、ワ行)
 
 SPECIALS = ["cl", "N"]
 
-
-
-def count_phoneme_occurrences(data: list) -> tuple[dict, dict, dict]:
-    """音素データ中の子音, 母音, 特殊記号の出現回数をカウントする.
+def count_phoneme_durations(data: list) -> tuple[dict, dict, dict]:
+    """音素データ中の子音, 母音, 特殊記号の総出現時間をカウントする.
 
     与えられたデータ (音声学的解析結果など) を走査し,
     各子音, 母音, 特殊記号の出現頻度を辞書形式で数える.
@@ -213,38 +294,38 @@ def count_phoneme_occurrences(data: list) -> tuple[dict, dict, dict]:
     Args:
         data: 音素情報のリスト.
             各要素は以下のような形式で構成される.
-                [pitch, mora, consonant, vowel, special_symbol]
+                [song, lyric, duration_msec, con, vow, spec]
 
     Returns:
         3つの辞書からなるタプル.
-            - consonant_counts: 子音ごとの出現回数
-            - vowel_counts: 母音ごとの出現回数
-            - special_counts: 特殊記号 (撥音, 促音など) の出現回数
+            - consonant_counts: 子音ごとの総出現時間
+            - vowel_counts: 母音ごとの総出現時間
+            - special_counts: 特殊記号 (撥音, 促音など) の総出現時間
     """
     # カウント辞書初期化
-    v_counts = dict.fromkeys(VOWELS, 0)
-    c_counts = dict.fromkeys(CONSONANT, 0)
-    spec_counts = dict.fromkeys(SPECIALS, 0)
+    v_durs = dict.fromkeys(VOWELS, 0)
+    c_durs = dict.fromkeys(CONSONANT, 0)
+    spec_durs = dict.fromkeys(SPECIALS, 0)
 
     # 各行を走査してカウント
     for row in data:
-        con, vow, spec = row[2], row[3], row[4]
-        others_c, others_v, others_spec = 0, 0, 0
-        if con in c_counts:
-            c_counts[con] += 1
+        con, vow, spec = row[3], row[4], row[5]
+        others_c = others_v = others_spec = 0
+        if con in c_durs:
+            c_durs[con] += 1
         else:
             others_c += 1
-        if vow in v_counts:
-            v_counts[vow] += 1
+        if vow in v_durs:
+            v_durs[vow] += 1
         else:
             others_v += 1
-        if spec in spec_counts:
-            spec_counts[spec] += 1
+        if spec in spec_durs:
+            spec_durs[spec] += 1
         else:
             others_spec += 1
 
     #print(f"Others - Consonant: {others_c}, Vowel: {others_v}, Special: {others_spec}")  # noqa: ERA001
-    return c_counts, v_counts, spec_counts
+    return c_durs, v_durs, spec_durs
 
 def plot_count_histogram(
     count_dict: dict[str, float],
@@ -262,18 +343,18 @@ def plot_count_histogram(
         xlabel: x軸ラベル (例: "Vowel", "Consonant").
         title: グラフのタイトルおよび保存ファイル名 (拡張子を除く).
         folder: 画像の保存先フォルダ (指定しない場合はスクリプトのあるフォルダ).
-        mode: プロットモード ("default" または "consonant").
-            "consonant" の場合は x軸ラベルを45°回転して描画する.
+        mode: プロットモード (Vowel, Consonant, Special Symbol).
     """
     figure_folder = Path(__file__).parent if folder is None else folder
 
     keys = list(count_dict.keys())
     values = list(count_dict.values())
-    total = sum(count_dict.values())
-    rate = []
+    length = sum(values)
+    rate=[]
     for v in values:
-        prob = round(v*100/total, 2)
+        prob = int(v*100/length)
         rate.append(prob)
+
     mode_settings: dict[str, dict[str, any]] = {
         "Consonant": {
             "figsize": (12, 8),
@@ -381,73 +462,93 @@ def  plot_art_histgram(
         plt.savefig(folder / f"{title}.png")
         plt.close()
 
-
 def plot_three_levels_count(
-    high: dict[str, int],
-    mid: dict[str, int],
-    low: dict[str, int],
+    slong: dict[str, int],
+    long: dict[str, int],
+    short: dict[str, int],
     folder: Path,
     mode: str,
     base_title: str,
 ) -> None:
-    """high/mid/low の3種類について count ヒストグラムをまとめて描画."""
+    """slong/long/short の3種類について count ヒストグラムをまとめて描画."""
     folder.mkdir(exist_ok=True)
-    plot_count_histogram(high, title=f"{_hi} {mode} {base_title}", folder=folder, mode=mode)
-    plot_count_histogram(mid,  title=f"{_mid} {mode} {base_title}", folder=folder, mode=mode)
-    plot_count_histogram(low,  title=f"{_low} {mode} {base_title}", folder=folder, mode=mode)
+    plot_count_histogram(slong, title=f"{_sl} {mode} {base_title}", folder=folder, mode=mode)
+    plot_count_histogram(long,  title=f"{_l} {mode} {base_title}", folder=folder, mode=mode)
+    plot_count_histogram(short,  title=f"{_s} {mode} {base_title}", folder=folder, mode=mode)
 
 
 def plot_three_levels_art(
-    high: dict[str, int],
-    mid: dict[str, int],
-    low: dict[str, int],
+    slong: dict[str, int],
+    long: dict[str, int],
+    short: dict[str, int],
     con_fig_dir: Path,
     key_list: list[str],
     label: str,          # 例: _nas, _plo など
     base_title: str,
     ylim: tuple[int, int],
 ) -> None:
-    """high/mid/low の3種類について articulation ヒストグラムをまとめて描画."""
+    """slong/long/short の3種類について articulation ヒストグラムをまとめて描画."""
     sub_dir = con_fig_dir / label
     sub_dir.mkdir(exist_ok=True)
 
     plot_art_histgram(
-        full_dict=high,
+        full_dict=slong,
         key_list=key_list,
-        title=f"{_hi} {label} {base_title}",
+        title=f"{_sl} {label} {base_title}",
         folder=sub_dir,
         ylim=ylim,
     )
     plot_art_histgram(
-        full_dict=mid,
+        full_dict=long,
         key_list=key_list,
-        title=f"{_mid} {label} {base_title}",
+        title=f"{_l} {label} {base_title}",
         folder=sub_dir,
         ylim=ylim,
     )
     plot_art_histgram(
-        full_dict=low,
+        full_dict=short,
         key_list=key_list,
-        title=f"{_low} {label} {base_title}",
+        title=f"{_s} {label} {base_title}",
         folder=sub_dir,
         ylim=ylim,
-    )
+)
 
-high_c, high_v, high_spec = count_phoneme_occurrences(High)
-mid_c, mid_v, mid_spec = count_phoneme_occurrences(Mid)
-low_c, low_v,  low_spec = count_phoneme_occurrences(Low)
 
-_hi, _mid, _low = "High", "Mid", "Low"
+def convert_csv(data:list, folder:Path, filename:str) -> None:
+    """リスト(または辞書のリスト)をDataFrameに変換し、CSVとして保存する関数。.
+
+    Parameters
+    ----------
+    data : list
+        リスト、または辞書のリスト(例:[{"a":1, "b":2}, {"a":3, "b":4}])
+    folder : Path
+        CSVを保存するフォルダのパス(Path形式)
+    filename : str
+        保存するCSVファイル名(例:"output.csv")
+    """
+    # DataFrameに変換
+    df = pd.DataFrame(data)
+    filepath = folder / filename
+    # CSVとして保存(BOM付きUTF-8でExcelでも文字化けしにくい)
+    df.to_csv(filepath, index=False, encoding="utf-8-sig")
+    filepath = folder / filename
+    print(f"✅ CSVファイルを保存しました: {filepath}")
+
+slong_c, slong_v, slong_spec = count_phoneme_durations(SuperLong)
+long_c, long_v, long_spec = count_phoneme_durations(Long)
+short_c, short_v,  short_spec = count_phoneme_durations(Short)
+
+_sl, _l, _s = "SuperLong", "Long", "Short"
 _vow, _con, _ss = "Vowel", "Consonant", "Special Symbol"
-base_title = "Occurrence Distribution"
+base_title = "Count Distribution"
 _nas, _plo, _fric, _tap, _app = "Nasal", "Plosive", "Fricative", "Tap", "Approximant"
 
-# --- vowel (母音) ---
-vow_fig_dir = fig_folder / _vow
+# # --- vowel (母音) ---
+vow_fig_dir = Path(data_folder) / "02exp_figures" / _vow
 plot_three_levels_count(
-    high=high_v,
-    mid=mid_v,
-    low=low_v,
+    slong=slong_v,
+    long=long_v,
+    short=short_v,
     folder=vow_fig_dir,
     mode=_vow,
     base_title=base_title,
@@ -459,9 +560,9 @@ con_fig_dir.mkdir(exist_ok=True)
 
 # - consonant (子音全体) -
 plot_three_levels_count(
-    high=high_c,
-    mid=mid_c,
-    low=low_c,
+    slong=slong_c,
+    long=long_c,
+    short=short_c,
     folder=con_fig_dir,
     mode=_con,
     base_title=base_title,
@@ -469,9 +570,9 @@ plot_three_levels_count(
 
 # -- nasal (鼻音) --
 plot_three_levels_art(
-    high=high_c,
-    mid=mid_c,
-    low=low_c,
+    slong=slong_c,
+    long=long_c,
+    short=short_c,
     con_fig_dir=con_fig_dir,
     key_list=nasal,
     label=_nas,
@@ -481,9 +582,9 @@ plot_three_levels_art(
 
 # -- plosive (破裂音) --
 plot_three_levels_art(
-    high=high_c,
-    mid=mid_c,
-    low=low_c,
+    slong=slong_c,
+    long=long_c,
+    short=short_c,
     con_fig_dir=con_fig_dir,
     key_list=plosive,
     label=_plo,
@@ -493,9 +594,9 @@ plot_three_levels_art(
 
 # -- fricative (摩擦音) --
 plot_three_levels_art(
-    high=high_c,
-    mid=mid_c,
-    low=low_c,
+    slong=slong_c,
+    long=long_c,
+    short=short_c,
     con_fig_dir=con_fig_dir,
     key_list=fricative,
     label=_fric,
@@ -505,9 +606,9 @@ plot_three_levels_art(
 
 # -- tap (弾き音) --
 plot_three_levels_art(
-    high=high_c,
-    mid=mid_c,
-    low=low_c,
+    slong=slong_c,
+    long=long_c,
+    short=short_c,
     con_fig_dir=con_fig_dir,
     key_list=tap,
     label=_tap,
@@ -517,9 +618,9 @@ plot_three_levels_art(
 
 # -- approximant (接近音) --
 plot_three_levels_art(
-    high=high_c,
-    mid=mid_c,
-    low=low_c,
+    slong=slong_c,
+    long=long_c,
+    short=short_c,
     con_fig_dir=con_fig_dir,
     key_list=approximant,
     label=_app,
@@ -532,9 +633,9 @@ SS_fig_dir = fig_folder / _ss
 SS_fig_dir.mkdir(exist_ok=True)
 
 plot_three_levels_count(
-    high=high_spec,
-    mid=mid_spec,
-    low=low_spec,
+    slong=slong_spec,
+    long=long_spec,
+    short=short_spec,
     folder=SS_fig_dir,
     mode=_ss,
     base_title=base_title,

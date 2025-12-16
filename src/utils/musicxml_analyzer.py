@@ -4,148 +4,246 @@
 """
 
 from pathlib import Path
-from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from music21 import converter, note
+from music21 import converter, note, tempo
 
 
 class MusicXmlAnalyzer:
-    """MusicXML データから音高・音価の統計量を計算するクラス.
+    """MusicXML の音高系列に対する統計計算を行うクラス.
 
-    単一 XML ファイルから音高 (MIDI 値) と音価 (四分音符比) を抽出し,
-    平均・中央値・音価重み付き平均の算出やヒストグラム保存を行う.
+    主に pitch (MIDI ノート番号) と duration (音価) を入力として
+    基本統計量(平均・中央値・音価重み付き平均)を返す.
+    インスタンス内部状態を持たないため、すべて staticmethod として提供する.
     """
 
-    def __init__(
-        self,
-        pic_dir: Path | None = None,
-        *,
-        strip_ties: bool = True,
-        include_grace: bool = False,
-    ) -> None:
-        """MusicXmlAnalyzer を初期化する.
+    @staticmethod
+    def get_median(series: pd.Series) -> float:
+        """Series の中央値を返す(空なら NaN)."""
+        if series.empty:
+            return float("nan")
+        return float(series.median())
+    @staticmethod
+    def get_mean(series: pd.Series) -> float:
+        """Series の平均値を返す(空なら NaN)."""
+        if series.empty:
+            return float("nan")
+        return float(series.mean())
 
-        Args:
-            pic_dir: ヒストグラム画像の保存先ディレクトリ. None の場合は保存しない.
-            strip_ties: タイで結ばれた音符を結合して扱うかどうか.
-            include_grace: 装飾音 (grace note) を含めるかどうか.
-        """
-        self.pic_dir = pic_dir
-        self.strip_ties = strip_ties
-        self.include_grace = include_grace
+    @staticmethod
+    def get_wmean(pitch: pd.Series, dur: pd.Series) -> float:
+        """Series の平均値(時間で重みづけ)を返す(空なら NaN)."""
+        if pitch.empty or dur.empty or pitch.size != dur.size:
+            return float("nan")
+        if dur.sum() == 0:
+            return float("nan")
+        return float(np.average(pitch, weights=dur))
 
-    def collect_pitches(
-        self,
-        xml_path: str | Path,
-    ) -> tuple[str, list[int], list[float]]:
-        """MusicXML ファイルから音高と音価を抽出する.
 
-        Args:
-            xml_path: MusicXML ファイルへのパス.
+class MusicXmlFile:
+    """単一の MusicXML ファイルから音符情報を抽出するクラス.
+
+    音符の pitch, duration, BPM, lyric を読み取り,
+    歌詞なしノートの結合や relative_pitch の付与など,
+    生データの整形処理のみを担当する.
+    統計計算は MusicXmlAnalyzer に委譲する.
+    """
+
+    def __init__(self, xml_path: str) -> None:
+        """クラスで使用する変数の定義."""
+        self.xml_path = Path(xml_path)
+        self.song = self.xml_path.stem
+        self.score = converter.parse(xml_path)
+        self.tied_score = self.score.stripTies(inPlace=False)
+        self.data: pd.DataFrame | None = None
+
+    def extract_data(self) -> pd.DataFrame:
+        """MusicXML から音符情報を抽出して DataFrame を作成する.
 
         Returns:
-            3要素のタプル.
-                - song: 曲名 (拡張子を除いたファイル名)
-                - pitches: 音高 (MIDI 値) のリスト.
-                - durs: 音価 (4分音符比) のリスト.
+            pandas.DataFrame:
+                各ノートについて以下の列を持つデータフレーム.
+                (song, note_idx, pitch, dur, BPM, lyric)
         """
-        path = Path(xml_path)
-        song = path.stem
-        score = converter.parse(str(path))
-
-        if self.strip_ties:
-            # inPlace=False: 元を残して結合済み Stream を返す
-            score = score.stripTies(inPlace=False)
-
-        pitches: list[int] = []
-        durs: list[float] = []
-
-        for n in score.recurse().notes:
-            # include_grace=False のときは装飾音や長さ 0 を除外
-            is_grace = getattr(n.duration, "isGrace", False)
-            is_zero_length = (n.duration.quarterLength or 0) == 0
-
-            if not self.include_grace and (is_grace or is_zero_length):
+        data = []
+        note_idx = 0 #その楽曲中で何番目の音符か
+        for n in self.tied_score.recurse().notes:
+            if not isinstance(n,note.Note):
+                continue
+            if n.duration.isGrace:
+                continue
+            ql = n.duration.quarterLength
+            if ql is None or ql == 0:
                 continue
 
-            if isinstance(n, note.Note):
-                pitches.append(int(n.pitch.midi))
-                durs.append(float(n.duration.quarterLength))
+            mm = n.getContextByClass(tempo.MetronomeMark)
+            bpm_value = mm.getQuarterBPM() if mm is not None else None
+            bpm = int(bpm_value) if bpm_value is not None else None
 
-        return song, pitches, durs
+            lyric_raw = n.lyric if n.lyric is not None else ""
+            lyric = lyric_raw.strip()
 
-    def get_stat_xml(
-        self,
-        song: str,
-        pitches: list[int],
-        durs: list[float],
-    ) -> dict[str, Any]:
-        """1曲分の音高系列から統計量を計算する.
+            data.append({
+                "song": self.song,
+                "note_idx": note_idx,
+                "pitch": int(n.pitch.midi),
+                "dur": float(ql),
+                "BPM": bpm,
+                "lyric": lyric
+            })
+            note_idx += 1
 
-        Args:
-            song: 曲名 (ファイル名など).
-            pitches: 音高 (MIDI 値) のリスト.
-            durs: 音価 (4分音符比) のリスト.
+        self.data = pd.DataFrame(data)
+        return self.data
+
+    def merge_lyricless_notes(self) -> pd.DataFrame:
+        """歌詞の無いノートを直前のノートに結合して音価のみ加算する.
+
+        曲頭の歌詞無しノートは破棄する.
 
         Returns:
-            曲ごとの統計量をまとめた辞書.
-            キーは "song_id", "mean", "median", "wmean".
+            pandas.DataFrame: 歌詞ありノートのみで構成されたデータフレーム.
         """
-        if not pitches:
-            # 音が無い場合は NaN で返す
-            return {"song_id": song, "mean": np.nan, "median": np.nan, "wmean": np.nan}
+        if self.data is None:
+            msg = "先に extract_data() を呼んで self.data を作ってください。"
+            raise  ValueError(msg)
 
-        mean = float(np.mean(pitches))
-        median = float(np.median(pitches))
+        df = (self.data.sort_values(["song", "note_idx"]).reset_index(drop=True).copy())
 
-        if len(durs) == len(pitches) and sum(durs) > 0:
-            wmean = float(np.average(pitches, weights=durs))
-        else:
-            wmean = float("nan")
+        merged_rows: list[dict[str, object]] = []
 
-        return {"song_id": song, "mean": mean, "median": median, "wmean": wmean}
+        for _, row in df.iterrows():
+            song = row["song"]
+            note_idx = row["note_idx"]
+            pitch = row["pitch"]
+            dur = row["dur"]
+            bpm = row["BPM"]
+            lyric = row["lyric"]
 
-    def save_histogram(
-        self,
-        song: str,
-        pitches: list[int],
-    ) -> None:
-        """音高分布のヒストグラムを描画し, 画像として保存する.
+            if (pd.isna(lyric) or str(lyric).strip() ==""):
+                if merged_rows and merged_rows[-1]["song"] == song:
+                    merged_rows[-1]["dur"] += dur
+                else:
+                    continue
+            else:
+                merged_rows.append({
+                "song": song,
+                "note_idx": note_idx,
+                "pitch": pitch,
+                "dur": dur,
+                "BPM": bpm,
+                "lyric": str(lyric).strip(),
+            })
+
+        self.data = pd.DataFrame(merged_rows)
+        return self.data
+
+    def add_relative_pitch(self) -> pd.DataFrame:
+        """self.data にrelative_pitch列を追加して返す."""
+        if self.data is None:
+            msg = "先に extract_data() を呼んで self.data を作ってください。"
+            raise  ValueError(msg)
+
+        df = self.data.copy()
+        median_pitch = MusicXmlAnalyzer.get_median(df["pitch"])
+        df["relative_pitch"] = df["pitch"] - median_pitch
+
+        self.data = df
+        return self.data
+
+class MusicXmlData:
+    """MusicXML フォルダ全体を読み込み, 全曲の音符情報を集約するクラス."""
+    def __init__(self, folder: str) -> None:
+        """分析対象のフォルダパスを受け取り, 参照可能にする."""
+        self.folder = Path(folder)
+        self.all_df: pd.DataFrame | None = None
+
+    def exp01_load(self) -> pd.DataFrame:
+        """exp01: フォルダ内にあるすべてのxmlをまとめたデータセットを作る."""
+        all_data: list[pd.DataFrame] = []
+
+        for file in self.folder.iterdir():
+            if file.suffix.lower() == ".xml":
+                xml_path = Path(self.folder) / file
+                xml = MusicXmlFile(str(xml_path))
+                xml.extract_data()
+                xml.merge_lyricless_notes()
+                exp01_df = xml.add_relative_pitch() #relative_pitchの追加
+
+                all_data.append(exp01_df)
+
+        self.all_df = pd.concat(all_data, ignore_index=True)
+        return self.all_df
+
+    def exp02_load(self) -> pd.DataFrame:
+        """exp02: フォルダ内にあるすべてのxmlをまとめたデータセットを作る."""
+        all_data: list[pd.DataFrame] = []
+
+        for file in self.folder.iterdir():
+            if file.suffix.lower() == ".xml":
+                xml_path = Path(self.folder) / file
+                xml = MusicXmlFile(str(xml_path))
+                xml.extract_data()
+                exp02_df = xml.merge_lyricless_notes()
+                all_data.append(exp02_df)
+
+        self.all_df = pd.concat(all_data, ignore_index=True)
+        return self.all_df
+class MusicXmlVisualizer:
+    """音高分布をヒストグラムとして可視化し, 画像として保存するクラス."""
+
+    def __init__(self, df: pd.DataFrame, pic_dir: str | None) -> None:
+        """画像の保存先ディレクトリを指定して初期化する.
 
         Args:
-            song: 曲名 (ファイル名など).
-            pitches: 音高 (MIDI 値) のリスト.
+            df: データフレーム.
+            pic_dir: 画像を保存するディレクトリパス. None の場合は保存を行わない.
         """
-        if self.pic_dir is None or not pitches:
+        self.df = df
+        if pic_dir is None:
+            self.pic_dir = None
+        else:
+            self.pic_dir = Path(pic_dir)
+
+    def plot_song_pitch_hist(self) -> None:
+        """音高分布をヒストグラムとして可視化し, 画像として保存する."""
+        if self.df is None or self.df.empty:
+            return
+        if self.pic_dir is None:
             return
 
+        song:str = self.df["song"].iloc[0] #曲名 (ファイル名など)
+        pitches:list[int] = self.df["pitch"].to_list() #音高 (MIDI 値) のリスト
+
         note_min, note_max = min(pitches), max(pitches)
-        # 右端を含めるよう +1
-        bins = np.arange(note_min, note_max + 2, 1).tolist()
-        pit_median = float(np.median(pitches))
-        pit_mean = float(np.mean(pitches))
+        bins = np.arange(note_min, note_max + 2, 1).tolist() # 右端を含めるよう +1
+
+        # Analyzer で統一
+        median_pitch: float = MusicXmlAnalyzer.get_median(self.df["pitch"])
+        mean_pitch: float = MusicXmlAnalyzer.get_mean(self.df["pitch"])
 
         plt.figure()
-        plt.hist(pitches, bins=bins, range=(note_min, note_max + 1), ec="white")
+        plt.hist(pitches, bins=bins, ec="white")
         plt.title(f"MIDI Note Count [{song}.xml]")
         plt.xlabel("MIDI Note Number")
         plt.xticks(np.arange(note_min, note_max + 1, 1))
         plt.ylabel("Count")
         # 平均・中央値の線
         plt.axvline(
-            pit_median,
+            median_pitch,
             linestyle="--",
+            c="red",
             linewidth=2,
-            label=f"Median = {pit_median:.1f}",
+            label=f"Median = {median_pitch:.1f}",
         )
         plt.axvline(
-            pit_mean,
+            mean_pitch,
             linestyle=":",
+            c="lime",
             linewidth=2,
-            label=f"Mean = {pit_mean:.1f}",
+            label=f"Mean = {mean_pitch:.1f}",
         )
         plt.legend()
 
@@ -153,51 +251,4 @@ class MusicXmlAnalyzer:
         save_path = self.pic_dir / f"{song}.png"
         plt.savefig(save_path, bbox_inches="tight")
         plt.close()
-
-
-def main() -> None:
-    """MusicXML データの統計量計算を一括で実行する."""
-    # フォルダの設定
-    musicxml_root = (
-        Path(
-            r"C:\Users\610ry\OneDrive - MeijiMail\院ゼミ・研究関連\修士論文",
-        )
-        / "東北きりたん歌唱データベース"
-        / "kiritan_singing-master"
-        / "musicxml"
-    )
-
-    save_dir = (
-        Path(r"C:\Users\610ry\MyProgramFiles\ArtLangVocalSynth\ArtLangVocalSynth")
-        / "pitch_mora_analysis"
-        / "pitch_count"
-    )
-
-    collector = MusicXmlAnalyzer(
-        pic_dir=save_dir,
-        strip_ties=True,
-        include_grace=False,
-    )
-
-    # 統計の集約
-    stats: list[dict[str, Any]] = []
-
-    for i in range(1, 51):
-        xml_path = musicxml_root / f"{i:02}.xml"
-        if not xml_path.is_file():
-            continue
-
-        song, pitches, durs = collector.collect_pitches(xml_path)
-        # 必要に応じてヒストグラムを保存する場合は以下を有効化する.
-        # collector.save_histogram(song, pitches)  # noqa: ERA001
-
-        stat = collector.get_stat_xml(song, pitches, durs)
-        stats.append(stat)
-
-    # DataFrame 化
-    df = pd.DataFrame(stats, columns=["song_id", "mean", "median", "wmean"])
-    print(df.head())
-
-
-if __name__ == "__main__":
-    main()
+        print(f"{save_path}に保存しました")
