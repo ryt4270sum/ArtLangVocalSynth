@@ -98,6 +98,44 @@ class MusicXmlFile:
         self.data = pd.DataFrame(data)
         return self.data
 
+    def extract_data_with_rests(self) -> pd.DataFrame:
+        """MusicXML から音符・休符情報を抽出して DataFrame を作成する.
+
+        Returns:
+        pandas.DataFrame:
+            各イベント(ノート/休符)について以下の列を持つデータフレーム.
+            (song, event_idx, is_rest, pitch, dur, BPM, lyric)
+            - pitch: 休符のとき None
+            - lyric: 休符のとき ""
+        """
+        data = []
+        evt_idx = 0  # その楽曲中で何番目のイベントか
+        for e in self.tied_score.recurse().notesAndRests:
+            if not isinstance(e, (note.Note, note.Rest)):
+                continue
+            if e.duration.isGrace:
+                continue
+            ql = e.duration.quarterLength
+            if ql is None or ql == 0:
+                continue
+
+            lyric_raw = e.lyric if e.lyric is not None else ""
+            lyric = lyric_raw.strip()
+
+            data.append({
+                "song": self.song,
+                "event_idx": evt_idx,
+                "is_rest": isinstance(e, note.Rest),
+                "pitch": int(e.pitch.midi) if isinstance(e, note.Note) else None,
+                "dur": float(ql),
+                "lyric": lyric  # 休符でも歌詞情報を保持
+            })
+            evt_idx += 1
+
+        self.data = pd.DataFrame(data)
+        return self.data
+
+
     def merge_lyricless_notes(self) -> pd.DataFrame:
         """歌詞の無いノートを直前のノートに結合して音価のみ加算する.
 
@@ -140,6 +178,83 @@ class MusicXmlFile:
         self.data = pd.DataFrame(merged_rows)
         return self.data
 
+    def merge_lyricless_notes_with_rests(self) -> pd.DataFrame:
+        """歌詞の無いノートを直前のノートに結合して音価のみ加算する.
+
+        休符はそのまま保持する.
+
+        Returns:
+            pandas.DataFrame: 歌詞ありノートと休符で構成されたデータフレーム.
+        """
+        if self.data is None:
+            msg = "先に extract_data_with_rests() を呼んで self.data を作ってください。"
+            raise  ValueError(msg)
+
+        df = (self.data.sort_values(["song", "event_idx"]).reset_index(drop=True).copy())
+
+        merged_rows: list[dict[str, object]] = []
+
+        for _, row in df.iterrows():
+            song = row["song"]
+            event_idx = row["event_idx"]
+            is_rest = row["is_rest"]
+            pitch = row["pitch"]
+            dur = row["dur"]
+            lyric = row["lyric"]
+
+            # 最初の行の場合
+            if merged_rows == []:
+                merged_rows.append({
+                    "song": song,
+                    "event_idx": event_idx,
+                    "is_rest": is_rest,
+                    "pitch": pitch,
+                    "dur": dur,
+                    "lyric": str(lyric).strip(),
+                })
+                continue
+
+            # 休符の場合
+            if is_rest == True:
+                if merged_rows[-1]["is_rest"] and song == merged_rows[-1]["song"]:
+                    merged_rows[-1]["dur"] += dur
+                else:
+                    merged_rows.append({
+                    "song": song,
+                    "event_idx": event_idx,
+                    "is_rest": is_rest,
+                    "pitch": pitch,
+                    "dur": dur,
+                    "lyric": str(lyric).strip(),
+                })
+            # ノートの場合
+            else:
+                if str(lyric).strip() == "":
+                    if merged_rows[-1]["is_rest"] == False and song == merged_rows[-1]["song"]:
+                        merged_rows[-1]["dur"] += dur
+                    else:
+                        merged_rows.append({
+                        "song": song,
+                        "event_idx": event_idx,
+                        "is_rest": is_rest,
+                        "pitch": pitch,
+                        "dur": dur,
+                        "lyric": str(lyric).strip(),
+                    })
+                else:
+                    merged_rows.append({
+                    "song": song,
+                    "event_idx": event_idx,
+                    "is_rest": is_rest,
+                    "pitch": pitch,
+                    "dur": dur,
+                    "lyric": str(lyric).strip(),
+                })
+
+        self.data = pd.DataFrame(merged_rows)
+        return self.data
+
+
     def add_relative_pitch(self) -> pd.DataFrame:
         """self.data にrelative_pitch列を追加して返す."""
         if self.data is None:
@@ -149,6 +264,31 @@ class MusicXmlFile:
         df = self.data.copy()
         median_pitch = MusicXmlAnalyzer.get_median(df["pitch"])
         df["relative_pitch"] = df["pitch"] - median_pitch
+
+        self.data = df
+        return self.data
+
+    def add_interval_pitch(self) -> pd.DataFrame:
+        """self.data にinterval_pitch列を追加して返す."""
+        if self.data is None:
+            msg = "先に extract_data_with_rests() を呼んで self.data を作ってください。"
+            raise  ValueError(msg)
+
+        df = self.data.copy()
+        interval_pitches: list[int | None] = [0]  # 最初の音符の音高差は0とする
+        for i in range(1, len(df)):
+            same_song = df.loc[i, "song"] == df.loc[i - 1, "song"]
+            curr_is_rest = bool(df.loc[i, "is_rest"])
+            prev_is_rest = bool(df.loc[i - 1, "is_rest"])
+            if same_song:
+                if (not curr_is_rest) and (not prev_is_rest):
+                    interval = df.loc[i, "pitch"] - df.loc[i - 1, "pitch"]
+                    interval_pitches.append(interval)
+                else:
+                    interval_pitches.append(None)  # 休符がある場合はNoneとする
+            else:
+                interval_pitches.append(None)  # 曲が変わる場合や、前後に休符を含む場合はNoneとする
+        df["interval_pitch"] = interval_pitches
 
         self.data = df
         return self.data
@@ -191,6 +331,23 @@ class MusicXmlData:
 
         self.all_df = pd.concat(all_data, ignore_index=True)
         return self.all_df
+
+    def exp03_load(self) -> pd.DataFrame:
+        """exp03: フォルダ内にあるすべてのxmlをまとめたデータセットを作る."""
+        all_data: list[pd.DataFrame] = []
+
+        for file in self.folder.iterdir():
+            if file.suffix.lower() == ".xml":
+                xml_path = Path(self.folder) / file
+                xml = MusicXmlFile(str(xml_path))
+                xml.extract_data_with_rests()
+                exp03_df = xml.merge_lyricless_notes_with_rests()
+                exp03_df = xml.add_interval_pitch()
+                all_data.append(exp03_df)
+
+        self.all_df = pd.concat(all_data, ignore_index=True)
+        return self.all_df
+
 class MusicXmlVisualizer:
     """音高分布をヒストグラムとして可視化し, 画像として保存するクラス."""
 

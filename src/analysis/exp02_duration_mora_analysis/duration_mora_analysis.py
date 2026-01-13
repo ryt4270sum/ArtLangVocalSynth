@@ -285,6 +285,39 @@ approximant = ["y", "w"] # approximant >> 接近音(ヤ行、ワ行)
 
 SPECIALS = ["cl", "N"]
 
+def save_table(df_mora_analysis: pd.DataFrame, name: str) -> None:
+    """子音-母音の組み合わせ表を保存する.
+
+    与えられたデータを走査し，子音と母音の組み合わせの出現回数をカウントし，
+    その結果を表形式で表示する.
+
+    Args:
+        df_mora_analysis: 音素情報を含むデータフレーム.
+        name: 保存するファイル名のベース部分.
+    Returns:
+        なし (表をコンソールに出力し、csvにして保存).
+    """
+
+    vowel_order = ["a", "i", "u", "e", "o"]
+    cons_order = ["#", "b", "by", "ch", "d", "dy", "f", "g", "gy", "h", "hy", "j", "k", "ky", "m", "my", "n", "ny", "p",
+               "py", "r", "ry", "s", "sh", "t", "ts", "ty", "v", "w", "y", "z", "cl", "N"]
+    table = pd.DataFrame(0, index=cons_order, columns=vowel_order)
+    for row in df_mora_analysis.to_numpy(object):
+        con, vow, spec = row[4], row[5], row[6]
+        if spec == "cl":
+            table.loc["cl", "u"] += 1
+        elif spec == "N":
+            table.loc["N", "u"] += 1
+        else:
+            if con not in cons_order:
+                con = "#"
+            table.loc[con, vow] += 1
+    print("Consonant-Vowel Table:")
+    print(table)
+    filename = f"{name} consonant_vowel_table.csv"
+    save_path = fig_folder / filename
+    table.to_csv(save_path, encoding="utf-8-sig")
+
 def count_phoneme_durations(data: list) -> tuple[dict, dict, dict]:
     """音素データ中の子音, 母音, 特殊記号の総出現時間をカウントする.
 
@@ -533,6 +566,8 @@ def convert_csv(data:list, folder:Path, filename:str) -> None:
     df.to_csv(filepath, index=False, encoding="utf-8-sig")
     filepath = folder / filename
     print(f"✅ CSVファイルを保存しました: {filepath}")
+
+save_table(df_mora_analysis, "All Levels")
 
 slong_c, slong_v, slong_spec = count_phoneme_durations(SuperLong)
 long_c, long_v, long_spec = count_phoneme_durations(Long)
