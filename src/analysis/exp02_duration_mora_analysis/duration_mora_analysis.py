@@ -1,19 +1,25 @@
 """Module for analyzing note duration and mora patterns in musical scores.
 
-This module processes MusicXML files to analyze the relationship between note duration and mora.
+This module processes MusicXML files to analyze the relationship between note
+duration and mora.
 """
 
+# ---- stdlib ----
 import sys
 from pathlib import Path
 
+# ---- path hack (before local imports) ----
 sys.path.append(str((Path(__file__).parent.parent.parent).resolve()))
 
+# ---- third-party ----
 import japanize_matplotlib  # noqa: F401
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+# ---- local: constants ----
 from utils.constants import (
+    # labels / modes
     _app,
     _con,
     _fric,
@@ -22,6 +28,7 @@ from utils.constants import (
     _ss,
     _tap,
     _vow,
+    # phoneme groups
     approximant,
     fricative,
     nasal,
@@ -29,12 +36,17 @@ from utils.constants import (
     second_mora_exclude,
     tap,
 )
+
+# ---- local: plotting / analysis helpers ----
 from utils.exp02_plot import (
+    ThreeLevelArtConfig,
     count_phoneme_durations,
     plot_three_levels_art,
     plot_three_levels_count,
     save_table,
 )
+
+# ---- local: analyzers ----
 from utils.mora_analyzer import MoraAnalyzer
 from utils.musicxml_analyzer import MusicXmlData
 
@@ -45,10 +57,12 @@ mora_analyzer = MoraAnalyzer()
 # ここから実行部分
 data_folder = Path(Path(__file__).parent) / "data"
 print("Data Folder: ", data_folder)
-row_csv = Path(data_folder) / "exp02_all_songs_row.csv" #生データ
-normalized_csv = Path(data_folder) / "normalized_lyrics.csv" #正規化だけしたデータ
-valid_csv = Path(data_folder) / "all_mora_analysis.csv" #分析対象データ
-invalid_csv = Path(data_folder) / "invalid_mora.csv"
+csv_folder = Path(data_folder) / "02exp_csv"
+csv_folder.mkdir(exist_ok=True)
+row_csv = csv_folder / "exp02_all_songs_row.csv" #生データ
+normalized_csv = csv_folder / "normalized_lyrics.csv" #正規化だけしたデータ
+valid_csv = csv_folder / "all_mora_analysis.csv" #分析対象データ
+invalid_csv = csv_folder / "invalid_mora.csv"
 
 if Path(row_csv).is_file():
     print("exp02_all_songs_row.csv exists")
@@ -283,15 +297,12 @@ for song, lyric, dur, bpm, con, vow, spec in df_mora_analysis.to_numpy(object):
     duration_msec = int (1000 * 60 * dur / bpm ) #ms単位にそろえるために1000をかける
     if  duration_msec >= long_threshold:
         superlong.append([song, lyric, duration_msec, con, vow, spec])
-        s_long_count += 1
     elif duration_msec >= dur_threshold:
         long.append([song, lyric, duration_msec, con, vow, spec])
-        long_count += 1
     else:
         short.append([song, lyric, duration_msec, con, vow, spec])
-        short_count += 1
 
-print(f"Super Long Count: {s_long_count}, Long Count: {long_count}, Short Count: {short_count}")
+print(f"Super Long Count: {len(superlong)}, Long Count: {len(long)}, Short Count: {len(short)}")
 # ======================================================================================
 
 df_slong = pd.DataFrame(superlong, columns=["song", "lyric", "dur_msec", "consonant", "vowel", "special"])
@@ -323,6 +334,47 @@ plot_three_levels_count(
 con_fig_dir = fig_folder / _con
 con_fig_dir.mkdir(exist_ok=True)
 
+nas_cfg = ThreeLevelArtConfig(
+    con_fig_dir=con_fig_dir,
+    key_list=nasal,
+    label=_nas,
+    base_title=base_title,
+    ylim=(0, 20),
+)
+
+plo_cfg = ThreeLevelArtConfig(
+    con_fig_dir=con_fig_dir,
+    key_list=plosive,
+    label=_plo,
+    base_title=base_title,
+    ylim=(0, 20),
+)
+
+fri_cfg = ThreeLevelArtConfig(
+    con_fig_dir=con_fig_dir,
+    key_list=fricative,
+    label=_fric,
+    base_title=base_title,
+    ylim=(0, 10),
+)
+
+tap_cfg = ThreeLevelArtConfig(
+    con_fig_dir=con_fig_dir,
+    key_list=tap,
+    label=_tap,
+    base_title=base_title,
+    ylim=(0, 20),
+)
+
+app_cfg = ThreeLevelArtConfig(
+    con_fig_dir=con_fig_dir,
+    key_list=approximant,
+    label=_app,
+    base_title=base_title,
+    ylim=(0, 10),
+)
+
+
 # - consonant (子音全体) -
 plot_three_levels_count(
     slong=slong_c,
@@ -338,11 +390,7 @@ plot_three_levels_art(
     slong=slong_c,
     long=long_c,
     short=short_c,
-    con_fig_dir=con_fig_dir,
-    key_list=nasal,
-    label=_nas,
-    base_title=base_title,
-    ylim=(0, 20),
+    cfg=nas_cfg
 )
 
 # -- plosive (破裂音) --
@@ -350,11 +398,7 @@ plot_three_levels_art(
     slong=slong_c,
     long=long_c,
     short=short_c,
-    con_fig_dir=con_fig_dir,
-    key_list=plosive,
-    label=_plo,
-    base_title=base_title,
-    ylim=(0, 20),
+    cfg=plo_cfg
 )
 
 # -- fricative (摩擦音) --
@@ -362,11 +406,7 @@ plot_three_levels_art(
     slong=slong_c,
     long=long_c,
     short=short_c,
-    con_fig_dir=con_fig_dir,
-    key_list=fricative,
-    label=_fric,
-    base_title=base_title,
-    ylim=(0, 10),
+    cfg=fri_cfg
 )
 
 # -- tap (弾き音) --
@@ -374,11 +414,7 @@ plot_three_levels_art(
     slong=slong_c,
     long=long_c,
     short=short_c,
-    con_fig_dir=con_fig_dir,
-    key_list=tap,
-    label=_tap,
-    base_title=base_title,
-    ylim=(0, 20),
+    cfg=tap_cfg
 )
 
 # -- approximant (接近音) --
@@ -386,11 +422,7 @@ plot_three_levels_art(
     slong=slong_c,
     long=long_c,
     short=short_c,
-    con_fig_dir=con_fig_dir,
-    key_list=approximant,
-    label=_app,
-    base_title=base_title,
-    ylim=(0, 10),
+    cfg=app_cfg
 )
 
 # --- special symbols (撥音・促音) ---

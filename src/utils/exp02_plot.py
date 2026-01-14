@@ -1,3 +1,5 @@
+"""utils.exp02_plot: 実験2で使う関数とか."""
+
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,9 +22,13 @@ from utils.constants import (
     VOWELS,
 )
 
-data_folder = Path(__file__).parent.parent.parent / "src" / "analysis" / "exp03_interval_pitch_mora_analysis" / "data"
-fig_folder = Path(data_folder) / "03exp_figures"
-fig_folder.mkdir(exist_ok=True)
+data_folder = Path(__file__).parent.parent.parent / "src" / "analysis" / "exp02_duration_mora_analysis" / "data"
+fol_02exp_fig = Path(data_folder) / "02exp_figures"
+fol_02exp_fig.mkdir(exist_ok=True)
+fol_02exp_csv = Path(data_folder) / "02exp_csv"
+fol_02exp_csv.mkdir(exist_ok=True)
+fol_02exp_heatmap = fol_02exp_fig / "heatmap"
+fol_02exp_heatmap.mkdir(exist_ok=True)
 
 _sl, _l, _s = "SuperLong", "Long", "Short"
 
@@ -67,8 +73,10 @@ def save_table(df_mora_analysis: pd.DataFrame, name: str) -> None:
 
     cnt_filename = f"{name} consonant_vowel_table.csv"
     prb_filename = f"{name} consonant_vowel_prob_table.csv"
-    save_count_path = fig_folder / cnt_filename
-    save_prob_path = fig_folder / prb_filename
+    save_csvfolder = fol_02exp_csv / name
+    save_csvfolder.mkdir(exist_ok=True)
+    save_count_path = save_csvfolder / cnt_filename
+    save_prob_path = save_csvfolder / prb_filename
     table.to_csv(save_count_path, encoding="utf-8-sig")
     table_prob.to_csv(save_prob_path, encoding="utf-8-sig")
 
@@ -81,7 +89,7 @@ def save_table(df_mora_analysis: pd.DataFrame, name: str) -> None:
     plt.ylabel("Consonant")
     plt.title(f"{name} Consonant-Vowel Heatmap")
     plt.tight_layout()
-    heatmap_fig_path = fig_folder / f"{name} consonant_vowel_heatmap.png"
+    heatmap_fig_path = fol_02exp_heatmap / f"{name} consonant_vowel_heatmap.png"
     plt.savefig(heatmap_fig_path)
     plt.close()
 
@@ -128,7 +136,7 @@ def count_phoneme_durations(data: list) -> tuple[dict, dict, dict]:
     return c_durs, v_durs, spec_durs
 
 def plot_count_histogram(
-    count_dict: dict[str, float],
+    count_dict: dict[str, int],
     title: str,
     mode: str,
     folder: Path | None = None
@@ -137,7 +145,6 @@ def plot_count_histogram(
 
     与えられたカウント辞書をもとに, 子音, 母音, 特殊記号などの
     出現頻度を棒グラフで可視化し, PNG 画像として保存する.
-
     Args:
         count_dict: 音素とその出現回数を対応付けた辞書.
         xlabel: x軸ラベル (例: "Vowel", "Consonant").
@@ -278,6 +285,8 @@ def plot_three_levels_count(
 
 @dataclass(frozen=True)
 class ThreeLevelArtConfig:
+    """articulation プロットの設定情報をまとめたデータクラス."""
+
     con_fig_dir: Path
     key_list: list[str]
     label: str

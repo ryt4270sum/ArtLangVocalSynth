@@ -1,4 +1,4 @@
-"""utils.exp03_plot: 実験3で使う関数とか."""
+"""utils.exp01_plot: 実験1で使う関数とか."""
 
 import sys
 from dataclasses import dataclass
@@ -22,16 +22,15 @@ from utils.constants import (
     VOWELS,
 )
 
-data_folder = Path(__file__).parent.parent.parent / "src" / "analysis" / "exp03_interval_pitch_mora_analysis" / "data"
-fol_03exp_fig = Path(data_folder) / "03exp_figures"
-fol_03exp_fig.mkdir(exist_ok=True)
-fol_03exp_csv = Path(data_folder) / "03exp_csv"
-fol_03exp_csv.mkdir(exist_ok=True)
-fol_03exp_heatmap = fol_03exp_fig / "heatmap"
-fol_03exp_heatmap.mkdir(exist_ok=True)
+data_folder = Path(__file__).parent.parent.parent / "src" / "analysis" / "exp01_pitch_mora_count_analysis" / "data"
+fol_01exp_fig = Path(data_folder) / "01exp_figures"
+fol_01exp_fig.mkdir(exist_ok=True)
+fol_01exp_csv = Path(data_folder) / "01exp_csv"
+fol_01exp_csv.mkdir(exist_ok=True)
+fol_01exp_heatmap = fol_01exp_fig / "heatmap"
+fol_01exp_heatmap.mkdir(exist_ok=True)
 
-
-_up, _same, _down= "up", "same", "down"
+_hi, _mid, _low = "High", "Mid", "Low"
 
 def save_table(df_mora_analysis: pd.DataFrame, name: str) -> None:
     """子音-母音の組み合わせ表を保存する.
@@ -49,6 +48,7 @@ def save_table(df_mora_analysis: pd.DataFrame, name: str) -> None:
     vowel_order = VOWEL_ORDER
     cons_order = CONS_ORDER
     table = pd.DataFrame(0, index=cons_order, columns=vowel_order)
+
     for con, vow, spec in df_mora_analysis[["consonant", "vowel", "special"]].to_numpy(object):
         if spec == "cl":
             table.loc["cl", "u"] += 1
@@ -73,7 +73,7 @@ def save_table(df_mora_analysis: pd.DataFrame, name: str) -> None:
 
     cnt_filename = f"{name} consonant_vowel_table.csv"
     prb_filename = f"{name} consonant_vowel_prob_table.csv"
-    save_csvfolder = fol_03exp_csv / name
+    save_csvfolder = fol_01exp_csv / name
     save_csvfolder.mkdir(exist_ok=True)
     save_count_path = save_csvfolder / cnt_filename
     save_prob_path = save_csvfolder / prb_filename
@@ -89,7 +89,7 @@ def save_table(df_mora_analysis: pd.DataFrame, name: str) -> None:
     plt.ylabel("Consonant")
     plt.title(f"{name} Consonant-Vowel Heatmap")
     plt.tight_layout()
-    heatmap_fig_path = fol_03exp_heatmap / f"{name} consonant_vowel_heatmap.png"
+    heatmap_fig_path = fol_01exp_heatmap / f"{name} consonant_vowel_heatmap.png"
     plt.savefig(heatmap_fig_path)
     plt.close()
 
@@ -102,7 +102,7 @@ def count_phoneme_occurrence(data: list) -> tuple[dict, dict, dict]:
     Args:
         data: 音素情報のリスト.
             各要素は以下のような形式で構成される.
-                [song, event_idx, lyric, interval, con, vow, spec]
+                [song, lyric, pitch, rel_pitch, con, vow, spec]
 
     Returns:
         3つの辞書からなるタプル.
@@ -271,56 +271,58 @@ def  plot_art_histgram(
         plt.close()
 
 def plot_three_levels_count(
-    up: dict[str, int],
-    same: dict[str, int],
-    down: dict[str, int],
+    high: dict[str, int],
+    mid: dict[str, int],
+    low: dict[str, int],
     folder: Path,
     mode: str,
     base_title: str,
 ) -> None:
-    """slong/long/short の3種類について count ヒストグラムをまとめて描画."""
+    """high/mid/low の3種類について count ヒストグラムをまとめて描画."""
     folder.mkdir(exist_ok=True)
-    plot_count_histogram(up, title=f"{_up} {mode} {base_title}", folder=folder, mode=mode)
-    plot_count_histogram(same,  title=f"{_same} {mode} {base_title}", folder=folder, mode=mode)
-    plot_count_histogram(down,  title=f"{_down} {mode} {base_title}", folder=folder, mode=mode)
+    plot_count_histogram(high, title=f"{_hi} {mode} {base_title}", folder=folder, mode=mode)
+    plot_count_histogram(mid,  title=f"{_mid} {mode} {base_title}", folder=folder, mode=mode)
+    plot_count_histogram(low,  title=f"{_low} {mode} {base_title}", folder=folder, mode=mode)
 
 @dataclass(frozen=True)
 class ThreeLevelArtConfig:
     """articulation プロットの設定情報をまとめたデータクラス."""
+
     con_fig_dir: Path
     key_list: list[str]
     label: str
     base_title: str
     ylim: tuple[int, int]
 
+
 def plot_three_levels_art(
-    up: dict[str, int],
-    same: dict[str, int],
-    down: dict[str, int],
+    high: dict[str, int],
+    mid: dict[str, int],
+    low: dict[str, int],
     cfg: ThreeLevelArtConfig
 ) -> None:
-    """slong/long/short の3種類について articulation ヒストグラムをまとめて描画."""
+    """high/mid/low の3種類について articulation ヒストグラムをまとめて描画."""
     sub_dir = cfg.con_fig_dir / cfg.label
     sub_dir.mkdir(exist_ok=True)
 
     plot_art_histgram(
-        full_dict=up,
+        full_dict=high,
         key_list=cfg.key_list,
-        title=f"{_up} {cfg.label} {cfg.base_title}",
+        title=f"{_hi} {cfg.label} {cfg.base_title}",
         folder=sub_dir,
         ylim=cfg.ylim,
     )
     plot_art_histgram(
-        full_dict=same,
+        full_dict=mid,
         key_list=cfg.key_list,
-        title=f"{_same} {cfg.label} {cfg.base_title}",
+        title=f"{_mid} {cfg.label} {cfg.base_title}",
         folder=sub_dir,
         ylim=cfg.ylim,
     )
     plot_art_histgram(
-        full_dict=down,
+        full_dict=low,
         key_list=cfg.key_list,
-        title=f"{_down} {cfg.label} {cfg.base_title}",
+        title=f"{_low} {cfg.label} {cfg.base_title}",
         folder=sub_dir,
         ylim=cfg.ylim,
 )
